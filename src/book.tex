@@ -56,16 +56,12 @@
 
 \vspace*{\fill} % Pushes content to the center or bottom if desired (optional)
 
-\begin{center}
-    \textbf{\large Fundamentals of Generative AI} \\[0.5em]
-    Copyright \copyright\ 2026 Ajay Vohra
-\end{center}
+{\centering
+\textbf{\large Fundamentals of Generative AI} \\[0.5em]
+Copyright \copyright\ 2026 Ajay Vohra
+\par}
 
 \vspace{1em}
-
-All rights reserved. No portion of this book may be reproduced in any form without prior written permission from the publisher or the copyright owner, except as permitted by U.S. copyright law.
-
-\vspace{1.5em}
 
 \textbf{GitHub Source \& Open Access} \\
 The digital source files for this book are hosted at: \\
@@ -87,12 +83,11 @@ You are free to: Share, copy, and redistribute the material in any medium or for
     \item \textbf{No-Derivatives:} If you remix, transform, or build upon the material, you may not distribute the modified material.
 \end{itemize}
 
-
 \vspace{1.5em}
 
 \textbf{Contact Information} \\
 For permission requests or inquiries, please contact: \\
-\href{mailto:[Your Email Address]}{ajayvohra.author@gmail.com}
+\href{mailto:ajayvohra.author@gmail.com}{ajayvohra.author@gmail.com}
 
 \vspace{2em} % Bottom spacing
 
@@ -527,8 +522,8 @@ where $\theta$ is the angle between the vectors. This reveals that the dot produ
 
 \begin{itemize}
 \item When vectors point in the same direction ($\theta = 0$), $\cos \theta = 1$, and the dot product is maximally positive
-\item When vectors are perpendicular ($\theta = 90°$), $\cos \theta = 0$, and the dot product is zero (the vectors are orthogonal)
-\item When vectors point in opposite directions ($\theta = 180°$), $\cos \theta = -1$, and the dot product is maximally negative
+\item When vectors are perpendicular ($\theta = 90^\circ$), $\cos \theta = 0$, and the dot product is zero (the vectors are orthogonal)
+\item When vectors point in opposite directions ($\theta = 180^\circ$), $\cos \theta = -1$, and the dot product is maximally negative
 \end{itemize}
 
 \subsection{Dot Products in Generative AI}
@@ -1357,14 +1352,6 @@ Several key insights emerge from this conceptual framework:
 As we proceed to subsequent chapters, we'll build on these foundations to explore specific model architectures (transformers, diffusion models), training procedures (supervised learning, reinforcement learning), and applications (text generation, image synthesis, scientific discovery). The conceptual framework established here—generation as probabilistic sampling from learned distributions—will remain our guiding principle throughout.
 
 Understanding these core concepts equips us to think rigorously about generative AI. Rather than viewing these systems as magical black boxes, we can reason about them as sophisticated statistical machines that learn to approximate data distributions from examples, then generate new samples from those learned distributions. This perspective enables both effective use of existing systems and development of new generative AI technologies.
-\documentclass{book}
-\usepackage{amsmath}
-\usepackage{amsfonts}
-\usepackage{graphicx} % Required for inserting images
-\usepackage{float}    % For better figure placement
-\usepackage{hyperref} % For clickable cross-references
-
-\begin{document}
 
 \chapter{Model Architectures for Generative AI}
 
