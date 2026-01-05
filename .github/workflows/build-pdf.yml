@@ -1,0 +1,54 @@
+name: Build LaTeX PDF
+
+on:
+  push:
+    paths:
+      - 'src/**'
+    branches:
+      - main
+  pull_request:
+    paths:
+      - 'src/**'
+    branches:
+      - main
+
+jobs:
+  build-pdf:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Install LaTeX
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra texlive-xetex
+        
+    - name: Build PDF
+      run: |
+        cd src
+        pdflatex -interaction=nonstopmode book.tex
+        pdflatex -interaction=nonstopmode book.tex
+        
+    - name: Upload PDF artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: fundamentals-of-generative-ai-pdf
+        path: src/book.pdf
+        
+    - name: Create Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ github.run_number }}
+        name: Release v${{ github.run_number }}
+        body: |
+          Automated release of "Fundamentals of Generative AI" PDF
+          
+          Built from commit: ${{ github.sha }}
+        files: src/book.pdf
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
