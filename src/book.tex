@@ -4868,6 +4868,1738 @@ Looking forward, we can expect:
 
 These advances will continue to make generative AI more accessible, affordable, and capable, enabling new applications and democratizing access to powerful AI systems.
 
+
+\chapter{Introduction to Reinforcement Learning}
+
+\section{Core Concepts}
+
+\subsection{The Reinforcement Learning Problem}
+
+\subsubsection{What Makes RL Different?}
+
+Imagine learning to ride a bicycle. You don't have a teacher telling you ``turn the handlebars exactly 3.2 degrees left now''---instead, you try something, observe what happens (maybe you wobble), and adjust your strategy accordingly. This trial-and-error learning, where your actions shape your experience, is the essence of Reinforcement Learning.
+
+
+
+Reinforcement Learning (RL) differs fundamentally from standard supervised learning in several critical ways:
+
+\textbf{The i.i.d. Assumption:} In supervised learning, we typically assume independent and identically distributed (i.i.d.) data. Think of a dataset of cat and dog photos: each photo exists independently, and showing the model one photo doesn't change what the next photo will be. The model's predictions don't influence the data distribution.
+
+\textbf{The Interactive Nature of RL:} In RL, the agent interacts with the world, and its actions directly influence the future observations it perceives. If a robot turns left at an intersection, it will see a completely different set of observations than if it had turned right. The data is inherently \emph{not} i.i.d.; past actions shape future states.
+
+\textbf{Delayed Consequences:} Unlike supervised learning where feedback is immediate and explicit (``this is a cat''), RL agents must learn from sparse, delayed rewards. A chess move might only reveal its quality many moves later when the game ends. This credit assignment problem---figuring out which past actions led to success or failure---is one of RL's central challenges.
+
+The core framework for RL is decision-making under uncertainty, formalized as a \textbf{Markov Decision Process (MDP)}.
+
+\subsection{Terminology \& Notation}
+
+Before diving into the mathematical formalism, let's establish the vocabulary of RL. Think of these as the ``cast of characters'' in our story:
+
+\begin{itemize}
+    \item \textbf{State ($s_t$):} A complete description of the state of the world at time $t$. 
+    
+    \emph{Analogy:} In chess, the state is the position of every piece on the board. In principle, knowing the state means having all the information needed to predict what could happen next.
+    
+    \item \textbf{Observation ($o_t$):} A partial description of the state (e.g., an image from a camera). 
+    
+    \emph{Analogy:} If you're playing poker, your observation includes your own cards and the community cards you can see, but not your opponents' hidden cards. The true state includes everyone's cards, but you only observe part of it. In fully observed environments, $s_t = o_t$.
+    
+    \item \textbf{Action ($a_t$):} The decision made by the agent at time $t$.
+    
+    \emph{Analogy:} The steering angle you choose when driving, the chess move you make, or the direction your robot decides to walk.
+    
+    \item \textbf{Policy ($\pi_\theta$):} The agent's decision-making function, parameterized by $\theta$. This is the ``brain'' of the agent---the strategy it follows to choose actions.
+    
+    The policy can be \emph{stochastic} (choosing actions probabilistically) or \emph{deterministic} (always choosing the same action in the same state).
+    
+    \begin{itemize}
+        \item $\pi_\theta(a_t | o_t)$: The probability of taking action $a_t$ given observation $o_t$.
+        \item $\pi_\theta(a_t | s_t)$: Policy mapping states to actions (in fully observed settings).
+    \end{itemize}
+    
+    The parameters $\theta$ might be the weights of a neural network that processes observations and outputs action probabilities.
+\end{itemize}
+
+\subsection{The Markov Decision Process (MDP)}
+
+An MDP provides the mathematical scaffolding for RL. It's a formal way to describe an environment where outcomes are partly random and partly under the control of a decision-maker.
+
+\textbf{Formal Definition:} An MDP is defined by the tuple $\mathcal{M} = \{\mathcal{S}, \mathcal{A}, \mathcal{T}, r\}$.
+
+Let's unpack each component:
+
+\begin{enumerate}
+    \item \textbf{State Space ($\mathcal{S}$):} The set of all valid states the environment can be in.
+    
+    \emph{Mathematical Detail:} $s \in \mathcal{S}$ means state $s$ is an element of the state space. This can be:
+    \begin{itemize}
+        \item \emph{Discrete:} A finite or countably infinite set. Example: positions on a chess board ($|\mathcal{S}| \approx 10^{43}$ possible positions).
+        \item \emph{Continuous:} An uncountably infinite set. Example: the configuration space of a robot arm, $\mathcal{S} = \mathbb{R}^n$ where $n$ is the number of joints.
+    \end{itemize}
+    
+    \item \textbf{Action Space ($\mathcal{A}$):} The set of all valid actions available to the agent.
+    
+    \emph{Examples:}
+    \begin{itemize}
+        \item Discrete: $\mathcal{A} = \{\text{up}, \text{down}, \text{left}, \text{right}\}$ for a grid-world robot.
+        \item Continuous: $\mathcal{A} = [-1, 1]^2$ for controlling the torques on two robot joints.
+    \end{itemize}
+    
+    \item \textbf{Transition Operator ($\mathcal{T}$):} Defines the dynamics of the system---the ``physics'' of how the world evolves.
+    
+    \emph{Mathematical Formulation:} The transition operator specifies:
+    \[ p(s_{t+1} | s_t, a_t) \]
+    This is the probability distribution over next states $s_{t+1}$ given that we're currently in state $s_t$ and take action $a_t$.
+    
+    \emph{Analogy:} If you're driving and turn the steering wheel left (action $a_t$), the transition operator determines where your car will be next (state $s_{t+1}$). In a deterministic world, this is exact; in reality, factors like road conditions add randomness.
+    
+    \emph{Tensor Representation (Discrete Case):} When both $\mathcal{S}$ and $\mathcal{A}$ are discrete with sizes $|\mathcal{S}|$ and $|\mathcal{A}|$, we can represent $\mathcal{T}$ as a three-dimensional tensor:
+    \[ \mathcal{T}_{i,j,k} = p(s_{t+1}=i | s_t=j, a_t=k) \]
+    where $i, j \in \{1, \ldots, |\mathcal{S}|\}$ and $k \in \{1, \ldots, |\mathcal{A}|\}$.
+    
+    This tensor has $|\mathcal{S}|^2 \times |\mathcal{A}|$ entries. For each state-action pair $(j,k)$, the slice $\mathcal{T}_{:,j,k}$ forms a probability distribution over next states, so $\sum_{i=1}^{|\mathcal{S}|} \mathcal{T}_{i,j,k} = 1$.
+    
+    \item \textbf{Reward Function ($r$):} A scalar signal indicating the immediate utility of a state-action pair.
+    
+    \emph{Formal Definition:}
+    \[ r: \mathcal{S} \times \mathcal{A} \rightarrow \mathbb{R} \]
+    \[ r(s, a) \text{ represents the immediate reward for taking action } a \text{ in state } s \]
+    
+    Sometimes we also see $r(s, a, s')$ or just $r(s)$, depending on the problem.
+    
+    \emph{Analogy:} The reward is like a ``score'' the environment gives you. Finding food gives a robot positive reward (+10), bumping into a wall gives negative reward (-1). The agent's goal is to maximize the sum of these scores over time.
+    
+    \emph{Design Consideration:} Reward design is crucial and subtle. If you reward a robot for ``moving forward quickly,'' it might learn to spin in circles (technically moving forward in each spin). Specifying \emph{what} we want without specifying \emph{how} to achieve it is both RL's power and its challenge.
+\end{enumerate}
+
+\textbf{The Markov Property:}
+
+The system is ``Markovian'' if the future is independent of the past given the present. This is a monumentally important assumption that makes RL tractable.
+
+\emph{Formal Statement:} 
+\[ p(s_{t+1} | s_t, a_t, s_{t-1}, a_{t-1}, \ldots, s_1, a_1) = p(s_{t+1} | s_t, a_t) \]
+
+In words: if you know the current state $s_t$, knowing the entire history of how you got there provides no additional information for predicting the future.
+
+\emph{Analogy:} It's like playing Monopoly. If I tell you the current board position (who owns what, everyone's money, current location), you can predict what might happen next. The sequence of dice rolls and moves that led to this position is irrelevant---all that matters is the current configuration.
+
+\emph{What if the Markov property doesn't hold?} In practice, many problems appear non-Markovian when we use observations $o_t$ instead of true states $s_t$. For example, velocity isn't Markovian if we only observe position at a single time step (we need at least two positions to estimate velocity). The solution is to augment the state to include enough history: $s_t = (o_t, o_{t-1}, \ldots, o_{t-k})$.
+
+\subsection{The Goal of Reinforcement Learning}
+
+Now that we have the MDP formalism, we can precisely state what we're trying to achieve in RL.
+
+\textbf{High-Level Goal:} Find the policy $\pi_\theta$ (parameterized by $\theta$) that maximizes the expected cumulative reward over time.
+
+\subsubsection{The Trajectory Distribution}
+
+A \emph{trajectory} $\tau$ is a sequence of states and actions:
+\[ \tau = (s_1, a_1, s_2, a_2, \ldots, s_T, a_T) \]
+
+The probability of a particular trajectory under policy $\pi_\theta$ is given by the chain rule of probability:
+
+\[ p_\theta(\tau) = p_\theta(s_1, a_1, \ldots, s_T, a_T) \]
+
+\emph{Step-by-step breakdown:}
+
+\begin{align}
+p_\theta(\tau) &= p(s_1) \cdot p_\theta(a_1, s_2, \ldots, s_T, a_T | s_1) \\
+&= p(s_1) \cdot \pi_\theta(a_1 | s_1) \cdot p(s_2, a_2, \ldots | s_1, a_1) \\
+&= p(s_1) \cdot \pi_\theta(a_1 | s_1) \cdot p(s_2 | s_1, a_1) \cdot p_\theta(a_2, s_3, \ldots | s_2) \\
+&= \ldots \\
+&= p(s_1) \prod_{t=1}^T \pi_\theta(a_t | s_t) p(s_{t+1} | s_t, a_t)
+\end{align}
+
+\emph{Interpretation:} 
+\begin{itemize}
+    \item $p(s_1)$: The initial state distribution (where we start).
+    \item $\pi_\theta(a_t | s_t)$: Our policy chooses action $a_t$ given state $s_t$.
+    \item $p(s_{t+1} | s_t, a_t)$: The environment responds with the next state (the transition dynamics).
+\end{itemize}
+
+The product alternates between policy choices (what we control) and environmental transitions (what we don't control).
+
+\subsubsection{Finite Horizon Objective}
+
+For a task with a fixed time horizon $T$ (like a game that always lasts exactly 100 turns), the optimization objective is:
+
+\[ \theta^* = \arg \max_\theta E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^T r(s_t, a_t) \right] \]
+
+\emph{Reading this equation:}
+\begin{itemize}
+    \item $\sum_{t=1}^T r(s_t, a_t)$: The total reward along trajectory $\tau$.
+    \item $E_{\tau \sim p_\theta(\tau)}[\cdot]$: The expected value over all possible trajectories.
+    \item $\arg \max_\theta$: Find the parameters $\theta$ that maximize this expectation.
+\end{itemize}
+
+\emph{Expanding the expectation:}
+
+\[ E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^T r(s_t, a_t) \right] = \int p_\theta(\tau) \sum_{t=1}^T r(s_t, a_t) \, d\tau \]
+
+In discrete state/action spaces, this integral becomes a sum over all possible trajectories. Since the number of trajectories grows exponentially with $T$ (there are $|\mathcal{A}|^T \times |\mathcal{S}|^T$ possible trajectories), we typically estimate this expectation using sampling.
+
+\subsubsection{Infinite Horizon Objective}
+
+Many real-world tasks don't have a natural endpoint---a self-driving car should drive well indefinitely, a thermostat should regulate temperature continuously.
+
+When $T \rightarrow \infty$, we need a different approach. We look for a \textbf{stationary distribution} $\mu = p_\theta(s, a)$.
+
+\emph{What is a stationary distribution?} It's a distribution over state-action pairs that remains constant over time. Formally, $\mu$ is stationary if:
+
+\[ \mu(s', a') = \sum_{s,a} \mu(s, a) \pi_\theta(a|s) p(s'|s,a) \]
+
+\emph{Intuition:} If you run your policy for a very long time, where do you spend most of your time? The stationary distribution answers this. It's the ``equilibrium'' distribution.
+
+\emph{Compact notation:} We write $\mu = \mathcal{T}\mu$, where $\mathcal{T}$ is viewed as an operator that propagates the distribution forward one time step.
+
+The infinite horizon objective becomes:
+
+\[ \theta^* = \arg \max_\theta E_{(s,a) \sim p_\theta(s,a)} [r(s,a)] \]
+
+\emph{Expanded:}
+
+\[ = \arg \max_\theta \sum_{s \in \mathcal{S}} \sum_{a \in \mathcal{A}} \mu(s,a) \cdot r(s,a) \]
+
+\emph{Practical consideration:} We often introduce a discount factor $\gamma \in (0,1)$ to ensure the infinite sum converges:
+
+\[ \theta^* = \arg \max_\theta E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^\infty \gamma^t r(s_t, a_t) \right] \]
+
+The discount factor also encodes a preference for immediate rewards over delayed rewards (like interest rates in economics).
+
+\subsection{The Anatomy of an RL Algorithm}
+
+Despite the diversity of RL algorithms---from Q-learning to policy gradients to model-based methods---most follow a common structural pattern. Understanding this pattern helps clarify how different algorithms relate to one another.
+
+The typical RL algorithm follows a cyclical three-step structure:
+
+\begin{enumerate}
+    \item \textbf{Generate Samples:} Run the current policy $\pi_\theta$ in the environment to collect trajectory data.
+    
+    \emph{What happens:} The agent interacts with the environment, recording $(s_t, a_t, r_t, s_{t+1})$ tuples. This is the only way to learn about the environment---through direct experience.
+    
+    \emph{Analogy:} A scientist conducting experiments to gather data about how a system behaves.
+    
+    \item \textbf{Fit Model / Estimate Return:} Use the samples to estimate the performance of the policy.
+    
+    This step varies widely across algorithms:
+    \begin{itemize}
+        \item \textbf{Model-based methods:} Fit a dynamics model $\hat{p}(s_{t+1}|s_t, a_t)$ to predict how the environment behaves.
+        \item \textbf{Value-based methods:} Estimate a value function $V^\pi(s)$ or $Q^\pi(s,a)$ that predicts expected future rewards.
+        \item \textbf{Policy gradient methods:} Estimate the gradient $\nabla_\theta J(\theta)$ using the collected samples.
+        \item \textbf{Simple Monte Carlo:} Just sum up the rewards $\sum_t r_t$ for each trajectory.
+    \end{itemize}
+    
+    \item \textbf{Improve Policy:} Update $\theta$ to make the policy better, based on the estimates from step 2.
+    
+    \emph{Update rule:} Typically uses gradient ascent:
+    \[ \theta_{new} = \theta_{old} + \alpha \nabla_\theta J(\theta) \]
+    where $\alpha$ is the learning rate and $J(\theta)$ is our objective.
+    
+    \emph{The fundamental challenge:} How do we improve the policy based on limited, noisy samples from a non-i.i.d. data distribution? This is where different RL algorithms diverge most significantly.
+\end{enumerate}
+
+\textbf{The Loop Continues:} After updating the policy, we return to step 1 with our new policy $\pi_{\theta_{new}}$, collect more data, and repeat. Over many iterations, the policy gradually improves.
+
+\emph{Key insight:} The data distribution $p_\theta(\tau)$ changes after every policy update! This non-stationarity is a central challenge in RL and distinguishes it from supervised learning where the data distribution is typically fixed.
+
+\textbf{Notes on Algorithm Structure:}
+
+\begin{itemize}
+    \item The sampling step implements the agent-environment interaction loop that generates the trajectory distribution $p_\theta(\tau)$.
+    
+    \item The return estimation often involves a Monte Carlo estimate of $J(\theta) = E_\tau[\sum_t r_t]$ using the finite sample average $\hat{J}(\theta) = \frac{1}{N}\sum_{i=1}^N \sum_t r_t^{(i)}$.
+    
+    \item The policy improvement step in real algorithms would compute policy gradients, temporal difference errors, or model predictions to guide the update in a principled direction.
+    
+    \item This pattern---sample, evaluate, improve---appears in virtually all RL algorithms, though the details of steps 2 and 3 vary dramatically.
+\end{itemize}
+
+\section{Policy Gradients}
+
+\subsection{The Policy Gradient Objective}
+
+\subsubsection{Intuition: What Are We Trying to Optimize?}
+In reinforcement learning, our goal is to find a policy $\pi_\theta$ that maximizes the total reward an agent receives over time. Unlike supervised learning where we have labeled examples, in RL we must learn from experience by trying actions and observing their consequences.
+
+The \textbf{expected return} $J(\theta)$ represents the average total reward we expect to receive when following policy $\pi_\theta$:
+
+\[ J(\theta) = E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=0}^{T} r(s_t, a_t) \right] \]
+
+Let's unpack each component:
+\begin{itemize}
+    \item $\theta$ are the parameters of our policy (e.g., neural network weights)
+    \item $\tau = (s_0, a_0, r_0, s_1, a_1, r_1, \dots, s_T, a_T, r_T)$ is a \textbf{trajectory} (or rollout)
+    \item $p_\theta(\tau)$ is the probability distribution over trajectories induced by policy $\pi_\theta$
+    \item $r(s_t, a_t)$ is the reward received at time step $t$
+\end{itemize}
+
+\textbf{Monte Carlo Approximation:} Since we cannot compute the expectation analytically (there are typically infinitely many possible trajectories), we approximate it by sampling $N$ trajectories:
+
+\[ J(\theta) \approx \frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T} r(s_{i,t}, a_{i,t}) \]
+
+This is simply the average total reward across our sampled episodes.
+
+\subsection{Direct Policy Differentiation (The Log-Derivative Trick)}
+
+\subsubsection{The Challenge: Differentiating Through Stochasticity}
+To optimize $J(\theta)$ using gradient ascent, we need $\nabla_\theta J(\theta)$. However, we face a fundamental challenge:
+
+\begin{enumerate}
+    \item The reward function $r(s,a)$ is often \textbf{non-differentiable} (e.g., +1 or 0 in many games)
+    \item Even when differentiable, $r$ doesn't depend on $\theta$ directly
+    \item The dependency on $\theta$ is through the \textbf{distribution} $p_\theta(\tau)$ over trajectories
+\end{enumerate}
+
+\subsubsection{Trajectory Distribution Decomposition}
+Let's first understand what $p_\theta(\tau)$ means. A trajectory's probability factors as:
+
+\[ p_\theta(\tau) = p(s_0) \prod_{t=0}^{T} \pi_\theta(a_t | s_t) \, p(s_{t+1} | s_t, a_t) \]
+
+where:
+\begin{itemize}
+    \item $p(s_0)$ is the initial state distribution (fixed, independent of $\theta$)
+    \item $\pi_\theta(a_t | s_t)$ is our policy (depends on $\theta$ — this is what we control!)
+    \item $p(s_{t+1} | s_t, a_t)$ is the environment dynamics (fixed, independent of $\theta$)
+\end{itemize}
+
+\subsubsection{The Log-Derivative Trick (Detailed Derivation)}
+We want to compute:
+\[ \nabla_\theta J(\theta) = \nabla_\theta E_{\tau \sim p_\theta(\tau)} [r(\tau)] \]
+
+where $r(\tau) = \sum_{t=0}^{T} r(s_t, a_t)$ is the total reward of trajectory $\tau$.
+
+\textbf{Step 1: Write expectation as an integral}
+\[ \nabla_\theta J(\theta) = \nabla_\theta \int p_\theta(\tau) \, r(\tau) \, d\tau \]
+
+\textbf{Step 2: Move gradient inside the integral}
+(Valid under mild regularity conditions)
+\[ = \int \nabla_\theta p_\theta(\tau) \, r(\tau) \, d\tau \]
+
+\textbf{Step 3: Apply the log-derivative trick}
+We use the identity: $\nabla_\theta p_\theta(\tau) = p_\theta(\tau) \nabla_\theta \log p_\theta(\tau)$
+
+\textit{Why does this work?} By the chain rule:
+\[ \nabla_\theta \log p_\theta(\tau) = \frac{1}{p_\theta(\tau)} \nabla_\theta p_\theta(\tau) \]
+\[ \Rightarrow \nabla_\theta p_\theta(\tau) = p_\theta(\tau) \nabla_\theta \log p_\theta(\tau) \]
+
+Substituting:
+\[ \nabla_\theta J(\theta) = \int p_\theta(\tau) \nabla_\theta \log p_\theta(\tau) \, r(\tau) \, d\tau \]
+
+\textbf{Step 4: Recognize this as an expectation}
+\[ = E_{\tau \sim p_\theta(\tau)} [\nabla_\theta \log p_\theta(\tau) \, r(\tau)] \]
+
+\textbf{Why is this useful?} We've transformed the problem into an expectation that we can estimate with samples! We don't need to know $p_\theta(\tau)$ explicitly—we just sample trajectories from it.
+
+\subsubsection{Simplifying the Log-Probability Gradient}
+Now let's compute $\nabla_\theta \log p_\theta(\tau)$. Taking the logarithm of the trajectory distribution:
+
+\[ \log p_\theta(\tau) = \log p(s_0) + \sum_{t=0}^{T} \log \pi_\theta(a_t | s_t) + \sum_{t=0}^{T} \log p(s_{t+1} | s_t, a_t) \]
+
+\textbf{Step 1: Apply gradient operator}
+\[ \nabla_\theta \log p_\theta(\tau) = \nabla_\theta \log p(s_0) + \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t | s_t) + \sum_{t=0}^{T} \nabla_\theta \log p(s_{t+1} | s_t, a_t) \]
+
+\textbf{Step 2: Terms independent of $\theta$ vanish}
+\begin{itemize}
+    \item $\nabla_\theta \log p(s_0) = 0$ (initial state doesn't depend on policy)
+    \item $\nabla_\theta \log p(s_{t+1} | s_t, a_t) = 0$ (environment dynamics don't depend on policy)
+\end{itemize}
+
+\textbf{Step 3: We're left with only policy terms}
+\[ \nabla_\theta \log p_\theta(\tau) = \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t | s_t) \]
+
+\textbf{This is remarkable!} Even though the trajectory distribution includes complex environment dynamics, the gradient only depends on our policy. We don't need to know or differentiate through the environment!
+
+\subsubsection{Final Policy Gradient Formula}
+Putting it all together:
+
+\[ \nabla_\theta J(\theta) = E_{\tau \sim p_\theta(\tau)} \left[ \left( \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t | s_t) \right) \left( \sum_{t=0}^{T} r(s_t, a_t) \right) \right] \]
+
+\textbf{Monte Carlo Estimate:}
+\[ \nabla_\theta J(\theta) \approx \frac{1}{N} \sum_{i=1}^{N} \left( \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_{i,t} | s_{i,t}) \right) \left( \sum_{t=0}^{T} r(s_{i,t}, a_{i,t}) \right) \]
+
+\textbf{Intuitive Interpretation:} 
+\begin{itemize}
+    \item $\nabla_\theta \log \pi_\theta(a_t | s_t)$ points in the direction that increases the probability of action $a_t$
+    \item $\sum_{t} r(s_t, a_t)$ weights this direction by how good the trajectory was
+    \item Good trajectories → push parameters to make those actions more likely
+    \item Bad trajectories → push parameters to make those actions less likely
+\end{itemize}
+
+\subsection{The REINFORCE Algorithm}
+
+\subsubsection{Algorithm Overview}
+REINFORCE (REward Increment = Nonnegative Factor × Offset Reinforcement × Characteristic Eligibility) is the simplest and most fundamental policy gradient algorithm, introduced by Williams (1992).
+
+\subsubsection{Detailed Algorithm Steps}
+
+\begin{enumerate}
+    \item \textbf{Initialize:} Policy parameters $\theta$ randomly
+    
+    \item \textbf{For each training iteration:}
+    \begin{enumerate}
+        \item \textbf{Sample Trajectories:} Run policy $\pi_\theta$ in the environment to collect $N$ complete episodes/trajectories $\{\tau^1, \tau^2, \dots, \tau^N\}$
+        
+        \item \textbf{Compute Returns:} For each trajectory $\tau^i$ and each time step $t$, compute:
+        \[ R_{i,t} = \sum_{t'=t}^{T} \gamma^{t'-t} r(s_{i,t'}, a_{i,t'}) \]
+        where $\gamma \in [0,1]$ is the discount factor
+        
+        \item \textbf{Estimate Gradient:} 
+        \[ \nabla_\theta J(\theta) \approx \frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_{i,t} | s_{i,t}) \, R_{i,t} \]
+        
+        \item \textbf{Update Parameters:} Gradient ascent step
+        \[ \theta \leftarrow \theta + \alpha \nabla_\theta J(\theta) \]
+        where $\alpha$ is the learning rate
+    \end{enumerate}
+    
+    \item \textbf{Repeat} until convergence or maximum iterations reached
+\end{enumerate}
+
+\subsubsection{Why This Works: The Credit Assignment Problem}
+A key insight is that we use $R_{i,t}$ (reward-to-go from time $t$) rather than the total trajectory reward. This incorporates \textbf{causality}: 
+\begin{itemize}
+    \item Actions at time $t$ can only affect rewards at time $t$ and later
+    \item They cannot affect past rewards
+    \item Using reward-to-go reduces variance in our gradient estimate
+\end{itemize}
+
+\subsection{The ``Pseudo-Loss'' and Automatic Differentiation}
+
+\subsubsection{The Challenge with Modern Deep Learning Frameworks}
+Machine-learning frameworks are typically designed for \textbf{supervised learning}, where:
+\begin{itemize}
+    \item We have a loss function $L(\theta)$ to minimize
+    \item We compute gradients $\nabla_\theta L$
+    \item The optimizer updates: $\theta \leftarrow \theta - \alpha \nabla_\theta L$
+\end{itemize}
+
+But in policy gradients:
+\begin{itemize}
+    \item We want to \textbf{maximize} expected reward, not minimize loss
+    \item The gradient formula $\nabla_\theta \log \pi_\theta(a|s) \cdot R$ doesn't naturally fit the supervised learning paradigm
+    \item Actions are \textbf{sampled}, not given as labels
+\end{itemize}
+
+\subsubsection{The Solution: Constructing a Pseudo-Loss}
+We construct a surrogate ``loss'' function whose gradient equals the policy gradient (up to a sign).
+
+\textbf{Recall Cross-Entropy Loss:} In multi-class classification with classes $\{1, 2, \dots, K\}$:
+\[ L_{CE} = -\sum_{k=1}^{K} y_k \log \hat{y}_k = -\log \hat{y}_{\text{true}} \]
+where $y_k$ is the one-hot encoded true label and $\hat{y}_k = \pi(k)$ are predicted probabilities.
+
+\textbf{Policy Gradient Analogy:}
+\begin{itemize}
+    \item Treat the \textbf{sampled action} $a_t$ as the ``true label''
+    \item The policy $\pi_\theta(a_t | s_t)$ provides action probabilities (like classifier outputs)
+    \item Weight the loss by the return $R_t$ instead of using uniform weighting
+\end{itemize}
+
+\textbf{The Pseudo-Loss:}
+\[ \tilde{L}(\theta) = -\frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T} R_{i,t} \log \pi_\theta(a_{i,t} | s_{i,t}) \]
+
+\subsubsection{Why This Works: Gradient Analysis}
+
+\textbf{Step 1: Compute the gradient of pseudo-loss}
+\begin{align*}
+\nabla_\theta \tilde{L}(\theta) &= -\frac{1}{N} \sum_{i,t} R_{i,t} \nabla_\theta \log \pi_\theta(a_{i,t} | s_{i,t}) \\
+&= -\frac{1}{N} \sum_{i,t} R_{i,t} \cdot \frac{\nabla_\theta \pi_\theta(a_{i,t} | s_{i,t})}{\pi_\theta(a_{i,t} | s_{i,t})} \\
+&= -\frac{1}{N} \sum_{i,t} R_{i,t} \nabla_\theta \log \pi_\theta(a_{i,t} | s_{i,t})
+\end{align*}
+
+\textbf{Step 2: Compare with policy gradient}
+Our policy gradient is:
+\[ \nabla_\theta J(\theta) \approx \frac{1}{N} \sum_{i,t} R_{i,t} \nabla_\theta \log \pi_\theta(a_{i,t} | s_{i,t}) \]
+
+\textbf{Step 3: Observe the relationship}
+\[ \nabla_\theta \tilde{L}(\theta) = -\nabla_\theta J(\theta) \]
+
+Since optimizers \textbf{minimize} loss by updating $\theta \leftarrow \theta - \alpha \nabla_\theta \tilde{L}$, we get:
+\[ \theta \leftarrow \theta - \alpha \left( -\nabla_\theta J(\theta) \right) = \theta + \alpha \nabla_\theta J(\theta) \]
+
+This is exactly gradient \textbf{ascent} on $J(\theta)$!
+
+\subsection{Implementation Insights}
+
+When implementing these algorithms, several practical considerations are critical:
+
+\textbf{1. Handling Action Distributions:}
+A policy network outputs unnormalized logits. We convert these to a probability distribution (often using a Softmax in discrete cases). It is crucial that the policy is \emph{stochastic} during training. If we simply took the action with the highest probability ($a = \arg\max_a \pi_\theta(a|s)$), we would never explore the environment, and the discrete argmax operation is non-differentiable. By sampling from the distribution, we enable exploration and differentiability.
+
+\textbf{2. Normalizing Returns:}
+Without normalization, returns might have high variance (e.g., one episode has a return of 100, another has 5). This causes unstable training. Normalizing returns (subtracting the mean and dividing by the standard deviation) makes all episodes contribute similarly to gradients and stabilizes the learning process.
+
+\textbf{3. Detaching Returns:}
+In computational graphs (such as those used in PyTorch or TensorFlow), $R_{i,t}$ must be treated as a \textbf{constant} during backpropagation. The returns depend on rewards from the environment, which are not differentiable with respect to $\theta$. The only dependency on $\theta$ we want to differentiate is through the log-probability of the actions. If we do not detach the returns, the gradients will be incorrect.
+
+\section{Actor-Critic Algorithms}
+
+\subsection{The Variance Problem in Policy Gradients}
+
+\subsubsection{Understanding the Problem}
+Recall the policy gradient theorem, which gives us the gradient of the expected return:
+\[ \nabla_\theta J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta} \left[ \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t | s_t) G_t \right] \]
+
+where $G_t = \sum_{t'=t}^{T} \gamma^{t'-t} r_{t'}$ is the discounted return from time $t$.
+
+\textbf{Intuition:} This estimator tells us to increase the probability of actions that led to high returns and decrease the probability of actions that led to low returns. However, there's a fundamental problem lurking here.
+
+\subsubsection{The Variance Issue: A Detailed Analysis}
+
+The Monte Carlo estimate of the gradient is:
+\[ \hat{g} = \frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t^{(i)} | s_t^{(i)}) G_t^{(i)} \]
+
+\textbf{Why is this high variance?}
+
+Consider the return $G_t$. It is a sum of many random variables:
+\[ G_t = r_t + \gamma r_{t+1} + \gamma^2 r_{t+2} + \cdots + \gamma^{T-t} r_T \]
+
+Each reward $r_{t'}$ depends on:
+\begin{itemize}
+    \item The stochastic state transitions: $s_{t'+1} \sim P(s_{t'+1} | s_{t'}, a_{t'})$
+    \item The stochastic policy: $a_{t'} \sim \pi_\theta(a_{t'} | s_{t'})$
+    \item The potentially stochastic reward function: $r_{t'} \sim R(s_{t'}, a_{t'})$
+\end{itemize}
+
+\textbf{Mathematical Analysis of Variance:}
+
+Let's compute the variance of $G_t$. Assume rewards have variance $\sigma_r^2$ and are independent (the variance of the sum of \textit{independent} random variables is simply the sum of their variances):
+\[ \text{Var}(G_t) = \text{Var}\left(\sum_{k=0}^{T-t} \gamma^k r_{t+k}\right) = \sum_{k=0}^{T-t} \gamma^{2k} \sigma_r^2 = \sigma_r^2 \frac{1 - \gamma^{2(T-t+1)}}{1 - \gamma^2} \]
+
+For $\gamma$ close to 1 and long horizons $(T-t)$, this variance grows approximately linearly with the horizon length!
+
+\textbf{Concrete Example:}
+
+Imagine two trajectories starting from the same state with the same action:
+\begin{itemize}
+    \item Trajectory 1: $G_t = 1 + 0 + 0 + 1 + 100 = 102$ (got lucky with a rare high reward)
+    \item Trajectory 2: $G_t = 1 + 0 + 0 + 1 + 0 = 2$ (normal trajectory)
+\end{itemize}
+
+Both started identically, but the gradient estimator attributes the entire difference ($\Delta G = 100$) to the action at time $t$, even though the large reward at the end was mostly due to luck in later states. This causes our gradient estimate to wildly fluctuate.
+
+\subsubsection{The Actor-Critic Solution}
+
+\textbf{Key Insight:} Instead of using a single noisy sample $G_t$ to estimate the value of being in state $s_t$ and taking action $a_t$, we train a function approximator—the \textbf{Critic} $V_\phi(s)$—to estimate the expected value:
+\[ V^\pi(s) = \mathbb{E}_{\tau \sim \pi} \left[ G_t \mid s_t = s \right] \]
+
+The Critic learns from many trajectories and provides a much lower-variance estimate of state values.
+
+\subsection{The Critic and Policy Evaluation}
+
+\subsubsection{The Policy Evaluation Problem}
+
+Given a policy $\pi$, we want to find the value function:
+\[ V^\pi(s) = \mathbb{E}_{\tau \sim \pi} \left[ \sum_{t=0}^{\infty} \gamma^t r_t \mid s_0 = s \right] \]
+
+This satisfies the \textbf{Bellman Equation}:
+\[ V^\pi(s) = \mathbb{E}_{a \sim \pi(\cdot|s)} \left[ r(s,a) + \gamma \mathbb{E}_{s' \sim P(\cdot|s,a)} [V^\pi(s')] \right] \]
+
+\textbf{Intuitive Derivation:}
+
+Starting from state $s$, the agent:
+\begin{enumerate}
+    \item Takes action $a$ according to $\pi(a|s)$
+    \item Receives immediate reward $r(s,a)$
+    \item Transitions to next state $s'$ with probability $P(s'|s,a)$
+    \item Continues collecting discounted rewards from $s'$ onward
+\end{enumerate}
+
+Therefore:
+\begin{align*}
+V^\pi(s) &= \mathbb{E}_{\pi} [r_t + \gamma r_{t+1} + \gamma^2 r_{t+2} + \cdots \mid s_t = s] \\
+&= \mathbb{E}_{\pi} [r_t \mid s_t = s] + \gamma \mathbb{E}_{\pi} [r_{t+1} + \gamma r_{t+2} + \cdots \mid s_t = s] \\
+&= \mathbb{E}_{a \sim \pi} [r(s,a)] + \gamma \mathbb{E}_{a \sim \pi, s' \sim P} [V^\pi(s')]
+\end{align*}
+
+\subsubsection{Learning the Critic: The Loss Function}
+
+We parameterize the value function as $V_\phi(s)$ (a neural network with parameters $\phi$) and minimize:
+\[ \mathcal{L}(\phi) = \mathbb{E}_{s_t \sim \rho^\pi} \left[ \frac{1}{2} \left( V_\phi(s_t) - y_t \right)^2 \right] \]
+
+where $\rho^\pi$ is the state distribution under policy $\pi$, and $y_t$ is our target. We have two choices for the target $y_t$:
+
+\paragraph{Monte Carlo Target:} $y_t = G_t = \sum_{t'=t}^T \gamma^{t'-t} r_{t'}$
+
+This target has following properties:
+
+\begin{itemize}
+    \item \textbf{Unbiased:} $\mathbb{E}[G_t | s_t] = V^\pi(s_t)$ (by definition of the value function)
+    \item \textbf{High Variance:} As discussed above, $G_t$ is a sum of many random variables
+    \item \textbf{No bootstrapping:} Doesn't depend on our current estimate $V_\phi$
+\end{itemize}
+
+\textbf{When to use:} Episodic tasks with short horizons where we can wait for full trajectories.
+
+\paragraph{Temporal Difference (TD) Target:} $y_t = r_t + \gamma V_\phi(s_{t+1})$
+
+\textbf{Derivation from Bellman Equation:}
+
+The Bellman equation tells us:
+\[ V^\pi(s_t) = r_t + \gamma V^\pi(s_{t+1}) \]
+
+We approximate $V^\pi(s_{t+1}) \approx V_\phi(s_{t+1})$, giving us the TD target.
+
+This target has following properties:
+
+\begin{itemize}
+    \item \textbf{Biased:} Because $V_\phi(s_{t+1}) \neq V^\pi(s_{t+1})$ in general, we have:
+    \[ \mathbb{E}[y_t | s_t] = r_t + \gamma V_\phi(s_{t+1}) \neq V^\pi(s_t) \]
+    The bias decreases as $V_\phi$ improves.
+    
+    \item \textbf{Low Variance:} Only depends on one random reward $r_t$ and one transition, not a long sum. Variance is approximately:
+    \[ \text{Var}(y_t) \approx \sigma_r^2 + \gamma^2 \epsilon_V^2 \]
+    where $\epsilon_V$ is the error in our value estimate.
+    
+    \item \textbf{Bootstrapping:} Uses current estimate to improve itself—can be unstable but enables online learning.
+\end{itemize}
+
+\textbf{Bias-Variance Tradeoff Visualization:}
+
+\begin{center}
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Method} & \textbf{Bias} & \textbf{Variance} \\
+\hline
+Monte Carlo & 0 & $\sigma_r^2 \sum_{k=0}^{T-t} \gamma^{2k}$ \\
+TD(0) & $\gamma \cdot \text{error}(V_\phi)$ & $\sigma_r^2$ \\
+\hline
+\end{tabular}
+\end{center}
+
+\paragraph{The Middle Ground: TD($\lambda$) and GAE}
+
+We can interpolate between MC and TD using $n$-step returns:
+\[ y_t^{(n)} = r_t + \gamma r_{t+1} + \cdots + \gamma^{n-1} r_{t+n-1} + \gamma^n V_\phi(s_{t+n}) \]
+
+Or use an exponential average of all $n$-step returns (Generalized Advantage Estimation) \cite{schulman2016}:
+\[ y_t^{\text{GAE}} = \sum_{n=1}^{\infty} (1-\lambda) \lambda^{n-1} y_t^{(n)} \]
+
+where $\lambda \in [0,1]$ controls the bias-variance tradeoff.
+
+\subsection{The Actor-Critic Architecture}
+\label{actor-cirtic-architecture}
+
+\subsubsection{Two Brains, One Goal}
+
+The Actor-Critic framework employs two separate neural networks working in tandem:
+
+\begin{enumerate}
+    \item \textbf{The Critic ($V_\phi$):} A regression network that learns to predict:
+    \[ V_\phi(s) \approx V^\pi(s) = \mathbb{E}_{\pi} [G_t | s_t = s] \]
+    
+    \textbf{Training Objective:}
+    \[ \min_\phi \mathbb{E}_{s \sim \rho^\pi} \left[ \frac{1}{2} (V_\phi(s) - y)^2 \right] \]
+    
+    \textbf{Gradient:}
+    \[ \nabla_\phi \mathcal{L}(\phi) = \mathbb{E}_{s} \left[ (V_\phi(s) - y) \nabla_\phi V_\phi(s) \right] \]
+    
+    \item \textbf{The Actor ($\pi_\theta$):} A policy network that learns to select actions:
+    \[ a \sim \pi_\theta(a | s) \]
+    
+    \textbf{Training Objective:}
+    \[ \max_\theta J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta} \left[ \sum_t \gamma^t r_t \right] \]
+\end{enumerate}
+
+\textbf{Intuition:} The Critic is like a coach who has watched many games and can tell you how good a position is. The Actor is like the player who uses this feedback to improve their play.
+
+\subsubsection{The Advantage Function: A Key Innovation}
+
+\textbf{Motivation:} Consider the policy gradient:
+\[ \nabla_\theta J(\theta) = \mathbb{E} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) G_t \right] \]
+
+Problem: $G_t$ contains information about both:
+\begin{itemize}
+    \item How good the action $a_t$ was
+    \item How good the state $s_t$ was (regardless of action)
+\end{itemize}
+
+We only want to reinforce actions based on how much \textit{better} they are than average!
+
+\textbf{Mathematical Foundation:}
+
+Define the \textbf{Q-function} (action-value function):
+\[ Q^\pi(s, a) = \mathbb{E}_{\pi} [G_t | s_t = s, a_t = a] \]
+
+And the \textbf{Advantage function}:
+\[ A^\pi(s, a) = Q^\pi(s, a) - V^\pi(s) \]
+
+\textbf{Intuitive Meaning:} 
+\begin{itemize}
+    \item $V^\pi(s)$: How good is state $s$ if we act according to policy $\pi$?
+    \item $Q^\pi(s, a)$: How good is state $s$ if we take action $a$ first, then follow $\pi$?
+    \item $A^\pi(s, a)$: How much better is action $a$ compared to the average action in state $s$?
+\end{itemize}
+
+\textbf{Key Property:} $\mathbb{E}_{a \sim \pi} [A^\pi(s, a)] = 0$
+
+\textbf{Proof:}
+\begin{align*}
+\mathbb{E}_{a \sim \pi} [A^\pi(s, a)] &= \mathbb{E}_{a \sim \pi} [Q^\pi(s, a) - V^\pi(s)] \\
+&= \mathbb{E}_{a \sim \pi} [Q^\pi(s, a)] - V^\pi(s) \\
+&= \mathbb{E}_{a \sim \pi} [\mathbb{E}[G_t | s_t=s, a_t=a]] - V^\pi(s) \\
+&= \mathbb{E}[G_t | s_t=s] - V^\pi(s) \\
+&= V^\pi(s) - V^\pi(s) = 0
+\end{align*}
+
+\subsubsection{Policy Gradient with Advantages}
+
+\textbf{Theorem:} The policy gradient can be written as:
+\[ \nabla_\theta J(\theta) = \mathbb{E}_{s \sim \rho^\pi, a \sim \pi} \left[ \nabla_\theta \log \pi_\theta(a | s) A^\pi(s, a) \right] \]
+
+\textbf{Proof Sketch:}
+
+Start with the standard form:
+\[ \nabla_\theta J(\theta) = \mathbb{E} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) G_t \right] \]
+
+We can subtract a baseline $b(s_t)$ without changing the expectation:
+\[ \nabla_\theta J(\theta) = \mathbb{E} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) (G_t - b(s_t)) \right] \]
+
+\textbf{Why?} Because:
+\begin{align*}
+\mathbb{E}_{a \sim \pi} [\nabla_\theta \log \pi_\theta(a | s) b(s)] &= b(s) \sum_a \pi_\theta(a|s) \nabla_\theta \log \pi_\theta(a | s) \\
+&= b(s) \sum_a \pi_\theta(a|s) \frac{\nabla_\theta \pi_\theta(a | s)}{\pi_\theta(a|s)} \\
+&= b(s) \sum_a \nabla_\theta \pi_\theta(a | s) \\
+&= b(s) \nabla_\theta \sum_a \pi_\theta(a | s) \\
+&= b(s) \nabla_\theta 1 = 0
+\end{align*}
+
+Now, choosing $b(s_t) = V^\pi(s_t)$ gives us:
+\[ \nabla_\theta J(\theta) = \mathbb{E} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) (G_t - V^\pi(s_t)) \right] \]
+
+And since $\mathbb{E}[G_t | s_t, a_t] = Q^\pi(s_t, a_t)$:
+\[ \nabla_\theta J(\theta) = \mathbb{E} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) A^\pi(s_t, a_t) \right] \]
+
+\subsubsection{Practical Advantage Estimation}
+
+We don't know $Q^\pi$ or $A^\pi$ exactly, so we approximate:
+
+\paragraph{1-Step TD Advantage:}
+\[ \hat{A}_t = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t) \]
+
+\textbf{Derivation:} From the Bellman equation, $Q^\pi(s,a) = r + \gamma V^\pi(s')$, so:
+\[ A^\pi(s, a) = Q^\pi(s,a) - V^\pi(s) = r + \gamma V^\pi(s') - V^\pi(s) \]
+
+We approximate $V^\pi \approx V_\phi$.
+
+\paragraph{$n$-Step Advantage:}
+\[ \hat{A}_t^{(n)} = \sum_{k=0}^{n-1} \gamma^k r_{t+k} + \gamma^n V_\phi(s_{t+n}) - V_\phi(s_t) \]
+
+\paragraph{Generalized Advantage Estimation (GAE) \cite{schulman2016}:}
+\[ \hat{A}_t^{\text{GAE}} = \sum_{l=0}^{\infty} (\gamma \lambda)^l \delta_{t+l} \]
+
+where $\delta_t = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t)$ is the TD error.
+
+\textbf{Closed Form:}
+\begin{align*}
+\hat{A}_t^{\text{GAE}} &= \delta_t + \gamma \lambda \delta_{t+1} + (\gamma \lambda)^2 \delta_{t+2} + \cdots \\
+&= (r_t + \gamma V(s_{t+1}) - V(s_t)) \\
+&\quad + \gamma\lambda (r_{t+1} + \gamma V(s_{t+2}) - V(s_{t+1})) \\
+&\quad + (\gamma\lambda)^2 (r_{t+2} + \gamma V(s_{t+3}) - V(s_{t+2})) + \cdots
+\end{align*}
+
+\section{Conclusion}
+
+We have established the foundational framework for RL, including the MDP formalism, policy gradients, and the actor-critic architecture.
+
+\subsubsection{The Actor-Critic Framework}
+
+\begin{center}
+\begin{tabular}{|l|l|}
+\hline
+\textbf{Component} & \textbf{Purpose} \\
+\hline
+Actor ($\pi_\theta$) & Learn the policy (what action to take) \\
+Critic ($V_\phi$) & Learn the value function (how good is this state) \\
+Advantage ($A$) & Measure how much better an action is than average \\
+\hline
+\end{tabular}
+\end{center}
+
+\subsubsection{Variance Reduction Techniques}
+
+\begin{enumerate}
+    \item \textbf{Baseline Subtraction:} Use $G_t - V(s_t)$ instead of $G_t$
+    \item \textbf{Bootstrapping:} Use $r + \gamma V(s')$ instead of full returns
+    \item \textbf{GAE:} Exponentially weighted average of n-step advantages \cite{schulman2016}
+\end{enumerate}
+
+Understanding these components—policy optimization, value estimation, and variance reduction—is essential for mastering modern Reinforcement Learning. In the next chapter, we apply these foundations to understand Reinforcement Learning from Human Feedback (RLHF) for generative AI models.
+
+\chapter{Reinforcement Learning from Human Feedback}
+
+\section{Introduction}
+
+In previous chapters, we explored how large language models are pre-trained on vast text corpora and fine-tuned for specific tasks. However, a fundamental challenge remains: how do we align these models with complex human values that are difficult to specify programmatically? 
+
+Consider the task of building a helpful AI assistant. We want it to be informative but not verbose, honest but tactful, creative but not confabulating. These preferences are subjective, context-dependent, and nearly impossible to encode in explicit reward functions. A response that's perfect for one user might be inappropriate for another. How do we teach models to navigate this nuanced landscape of human preferences?
+
+Reinforcement Learning from Human Feedback (RLHF) provides an elegant solution: rather than attempting to specify what we want through explicit rules, we show the model examples of what we prefer and let it learn the underlying patterns. This approach has become the cornerstone of modern AI alignment, powering systems like GPT-4, Claude, and Gemini \cite{ouyang2022training, bai2022}.
+
+
+
+\subsection{The Core Insight}
+
+RLHF rests on a simple but powerful observation: \textbf{humans are better at comparing outcomes than specifying objectives} \cite{christiano2017}. 
+
+\textbf{Analogy:} Imagine you're teaching someone to make coffee. You could try to specify the exact temperature, brewing time, and coffee-to-water ratio---but these numbers might not capture what makes a "good" cup. Alternatively, you could present two cups and say "this one is better." After enough comparisons, your student learns what you value: perhaps you prefer stronger coffee, or a smoother finish, or particular flavor notes.
+
+RLHF applies this principle to AI training:
+\begin{itemize}
+\item Instead of reward = +1 for "good" text (but what is "good"?), we collect comparisons: "Response A is better than Response B"
+\item From these comparisons, we learn a reward model that predicts human preferences
+\item We then optimize the language model to generate text that scores highly on this learned reward function
+\end{itemize}
+
+\subsection{Why Not Just Supervised Learning?}
+
+You might wonder: if we have examples of good responses, why not simply fine-tune the model on those examples using supervised learning? Why introduce the complexity of reinforcement learning?
+
+Several reasons motivate the RL approach:
+
+\textbf{Sample Efficiency:} Generating high-quality demonstrations is expensive---it requires expert humans to write complete, polished responses. Preference comparisons are much cheaper: humans can quickly judge "A is better than B" even when they couldn't easily write the perfect response themselves. This makes preference data 5-10$\times$ cheaper to collect than demonstrations.
+
+\textbf{Preference is Relative:} Human judgments are inherently comparative. When rating a response on an absolute scale (1-5 stars), people struggle with consistency. But when comparing two responses, agreement is much higher. RLHF's pairwise comparisons align with how humans naturally evaluate quality.
+
+\textbf{Exploration and Diversity:} Supervised learning teaches the model to imitate the training data. If demonstrations come from a narrow set of writing styles, the model learns that narrow distribution. RL optimization, by contrast, allows the model to explore diverse ways of achieving high reward---potentially finding better approaches than any single demonstrator used.
+
+\textbf{Optimization Pressure:} Supervised fine-tuning says "be like this example." RLHF says "maximize this objective." The optimization pressure from RL can push the model to better extremes of the desired behavior than any individual demonstration exhibits.
+
+That said, RLHF doesn't replace supervised learning---it builds on it. As we'll see, the RLHF pipeline begins with supervised fine-tuning to give the model a strong foundation before applying RL.
+
+\section{The RLHF Pipeline: Three-Stage Training}
+
+RLHF consists of three distinct training stages, each addressing a different challenge in the alignment problem:
+
+\begin{enumerate}
+\item \textbf{Stage 1 - Supervised Fine-Tuning (SFT):} Train the base model on high-quality demonstrations to establish basic instruction-following capability
+\item \textbf{Stage 2 - Reward Modeling:} Learn a reward function from human preference comparisons
+\item \textbf{Stage 3 - RL Optimization:} Use reinforcement learning to optimize the policy according to the learned reward model
+\end{enumerate}
+
+Let's examine each stage in detail, building intuition before diving into the mathematics.
+
+\subsection{Stage 1: Supervised Fine-Tuning (SFT)}
+
+\subsubsection{The Initialization Problem}
+
+Imagine trying to teach a student calculus when they don't yet understand basic arithmetic. The learning task becomes intractable---you need foundations before advancing to complex topics. Similarly, applying RL directly to a pre-trained language model faces a bootstrapping problem:
+
+\begin{itemize}
+\item Pre-trained models predict the next token based on internet text---they can complete sentences but don't naturally follow instructions
+\item RL requires generating complete responses to measure rewards
+\item If initial responses are nonsensical, reward signals are uninformative
+\item The policy needs enough initial competence to produce meaningful variations for learning
+\end{itemize}
+
+\textbf{Supervised Fine-Tuning solves this bootstrapping problem} by teaching the model basic instruction-following before RL begins.
+
+\subsubsection{SFT Data Collection}
+
+The SFT dataset consists of high-quality demonstrations: $(x, y)$ pairs where $x$ is a prompt and $y$ is a desired completion.
+
+\textbf{Example data points:}
+\begin{itemize}
+\item Prompt ($x$): "Explain quantum entanglement to a 10-year-old."
+\item Response ($y$): "Imagine you have two magic coins. When you flip one and it lands on heads, the other coin---no matter how far away---instantly lands on heads too! That's similar to quantum entanglement: particles that are 'entangled' affect each other instantly, even across huge distances. Scientists are still figuring out why, but it's one of the strangest things in nature!"
+\end{itemize}
+
+These demonstrations are typically created by:
+\begin{itemize}
+\item \textbf{Human contractors:} Writers or domain experts produce responses following detailed guidelines
+\item \textbf{Curated existing data:} High-quality Q\&A from Stack Overflow, Reddit, customer service logs, etc.
+\item \textbf{Augmentation:} Existing responses revised to meet quality standards
+\end{itemize}
+
+Quality matters more than quantity. The SFT dataset is typically small by pre-training standards---10,000 to 100,000 examples---but each is carefully crafted.
+
+\subsubsection{The SFT Objective}
+
+We fine-tune the pre-trained model $\pi_{\theta_0}$ by maximizing the log-likelihood of demonstrated responses:
+
+\begin{equation}
+\mathcal{L}_{\text{SFT}}(\theta) = \mathbb{E}_{(x,y) \sim \mathcal{D}_{\text{SFT}}} \left[ \log \pi_\theta(y|x) \right]
+\end{equation}
+
+This is standard supervised learning: the model learns to predict each token $y_t$ in the response given the prompt $x$ and previous tokens $y_{<t}$.
+
+\textbf{Expanding the likelihood:} For a response of length $T$:
+\begin{equation}
+\log \pi_\theta(y|x) = \sum_{t=1}^{T} \log \pi_\theta(y_t | x, y_{<t})
+\end{equation}
+
+The model is trained to maximize this sum across all demonstration pairs.
+
+\subsubsection{What SFT Achieves}
+
+After SFT, the model has learned:
+\begin{itemize}
+\item \textbf{Format adherence:} How to structure responses appropriately
+\item \textbf{Instruction following:} Basic ability to interpret and execute prompts
+\item \textbf{Domain conventions:} Writing style, tone, level of detail expected
+\item \textbf{Task distribution:} What kinds of requests to expect
+\end{itemize}
+
+Critically, the SFT model $\pi^{\text{SFT}}$ becomes our \textbf{reference point}. In stage 3, we'll prevent the RL-optimized policy from drifting too far from $\pi^{\text{SFT}}$---ensuring the model remains fluent and coherent even as we optimize for preferences.
+
+\subsection{Stage 2: Reward Model Training}
+
+The second stage addresses a fundamental question: \textbf{how do we convert human preferences into a reward signal for RL?}
+
+\subsubsection{From Ratings to Comparisons}
+
+Early attempts at learning from human feedback used absolute ratings \cite{christiano2017}:
+\begin{itemize}
+\item "Rate this response from 1-10"
+\item "Is this response helpful? [Yes/No]"
+\item "Rate the response on helpfulness, honesty, and harmlessness [1-5 each]"
+\end{itemize}
+
+These approaches struggled with several problems:
+
+\textbf{Scale inconsistency:} Different raters use scales differently. One person's "7/10" might equal another's "9/10." This noise makes learning difficult.
+
+\textbf{Lack of context:} An absolute rating doesn't reveal what could be improved. Why is this a 7 and not a 9? What would make it better?
+
+\textbf{Cognitive difficulty:} Humans find absolute judgments hard. Is a response "8/10 helpful"? What does that even mean precisely?
+
+\textbf{Comparative judgments solve these issues.} Instead of rating responses absolutely, we present pairs and ask: "Which response is better?"
+
+This is much easier for humans:
+\begin{itemize}
+\item More reliable agreement between raters
+\item Natural and intuitive
+\item Reveals relative quality directly
+\item Implicitly captures what makes one response preferable
+\end{itemize}
+
+\subsubsection{Preference Data Collection}
+
+For each prompt $x$ in the training set:
+
+\begin{enumerate}
+\item \textbf{Generate candidate responses:} Sample multiple completions from $\pi^{\text{SFT}}$:
+\begin{align}
+y_1 &\sim \pi^{\text{SFT}}(\cdot | x) \\
+y_2 &\sim \pi^{\text{SFT}}(\cdot | x) \\
+&\vdots \nonumber \\
+y_k &\sim \pi^{\text{SFT}}(\cdot | x)
+\end{align}
+
+Typically $k=4$ to $k=9$ responses per prompt.
+
+\item \textbf{Human annotation:} Present pairs of responses to human raters who select the better response:
+\begin{itemize}
+\item Show prompt $x$ and two responses $y_i, y_j$
+\item Rater chooses: $y_w \succ y_l$ (winner $y_w$ preferred over loser $y_l$)
+\item Can include "equally good" or "both bad" options
+\end{itemize}
+
+\item \textbf{Store comparison:} Record $(x, y_w, y_l)$ in the preference dataset $\mathcal{D}_{\text{pref}}$
+\end{enumerate}
+
+\textbf{Annotation guidelines matter.} Raters receive detailed instructions about what makes a response "better":
+\begin{itemize}
+\item Helpfulness: Does it answer the question? Is it informative?
+\item Harmlessness: Does it avoid harmful, biased, or inappropriate content?
+\item Honesty: Does it acknowledge uncertainty? Avoid hallucination?
+\end{itemize}
+
+The specific criteria depend on the application---a creative writing assistant might prioritize originality, while a factual Q\&A system emphasizes accuracy.
+
+\subsubsection{The Bradley-Terry Model}
+
+How do we convert preference comparisons into a learned reward function? We need a probabilistic model of human preferences.
+
+The \textbf{Bradley-Terry model} provides the mathematical framework. It assumes that each response has an underlying "quality" or "utility" captured by a scalar reward $r(x,y)$. The probability that response $y_w$ is preferred over $y_l$ is:
+
+\begin{equation}
+P(y_w \succ y_l | x) = \frac{\exp(r(x, y_w))}{\exp(r(x, y_w)) + \exp(r(x, y_l))}
+\end{equation}
+
+This can be simplified using the sigmoid function $\sigma(z) = \frac{1}{1 + \exp(-z)}$:
+
+\begin{equation}
+P(y_w \succ y_l | x) = \sigma(r(x, y_w) - r(x, y_l))
+\end{equation}
+
+\textbf{Intuition:} If $r(x, y_w) \gg r(x, y_l)$ (winner much better), then $\sigma(\text{large positive}) \approx 1$ (almost certainly prefer winner). If rewards are equal, $\sigma(0) = 0.5$ (50-50 chance). The model captures the intuition that larger reward differences make preferences more deterministic.
+
+\textbf{Why this functional form?} The Bradley-Terry model satisfies desirable properties:
+\begin{itemize}
+\item \textbf{Monotonicity:} Higher reward $\Rightarrow$ higher probability of preference
+\item \textbf{Symmetry:} $P(y_1 \succ y_2) + P(y_2 \succ y_1) = 1$
+\item \textbf{Transitivity} (approximately): If $r(x,y_1) > r(x,y_2) > r(x,y_3)$, then preferences follow a consistent ranking
+\end{itemize}
+
+\subsubsection{Reward Model Architecture}
+
+We parameterize the reward function as a neural network $r_\phi(x, y)$ that outputs a scalar score. The architecture typically:
+
+\begin{enumerate}
+\item \textbf{Shares backbone with SFT model:} Initialize from $\pi^{\text{SFT}}$ weights
+\item \textbf{Processes concatenated input:} Encode $[x, y]$ as a sequence
+\item \textbf{Replaces language modeling head:} Instead of predicting next token probabilities, output a single scalar value
+\end{enumerate}
+
+\textbf{Architectural details:}
+\begin{itemize}
+\item Input: Token sequence $[x, y]$ of length $T$
+\item Backbone: Transformer encoder produces hidden states $\mathbf{h}_1, \ldots, \mathbf{h}_T$
+\item Pooling: Extract final hidden state $\mathbf{h}_T$ (or use attention pooling over all states)
+\item Value head: Linear projection $r_\phi(x,y) = \mathbf{w}^T \mathbf{h}_T$
+\end{itemize}
+
+This architecture allows the reward model to consider the entire response context when computing the reward.
+
+\subsubsection{Training Objective}
+
+We train the reward model to maximize the likelihood of observed preferences. For each comparison $(x, y_w, y_l)$:
+
+\begin{equation}
+\mathcal{L}_{\text{RM}}(\phi) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}_{\text{pref}}} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l)) \right]
+\end{equation}
+
+\textbf{Derivation:} This is maximum likelihood estimation. We want to maximize:
+\begin{equation}
+P(\text{observed preferences} | \phi) = \prod_{(x,y_w,y_l)} P(y_w \succ y_l | x, \phi)
+\end{equation}
+
+Taking the logarithm and noting that maximizing is equivalent to minimizing the negative log-likelihood:
+\begin{align}
+\mathcal{L}_{\text{RM}}(\phi) &= -\sum_{(x,y_w,y_l)} \log P(y_w \succ y_l | x, \phi) \nonumber \\
+&= -\sum_{(x,y_w,y_l)} \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l))
+\end{align}
+
+\textbf{Binary cross-entropy perspective:} This loss is equivalent to binary classification where:
+\begin{itemize}
+\item Positive class: $y_w$ is preferred
+\item Negative class: $y_l$ is preferred
+\item Logits: $r_\phi(x, y_w) - r_\phi(x, y_l)$
+\item Target: Always 1 (prefer the winner)
+\end{itemize}
+
+\subsubsection{Reward Model Properties and Diagnostics}
+
+After training, we can evaluate the reward model's quality:
+
+\textbf{Accuracy:} On held-out preference comparisons, what fraction does the model correctly rank?
+\begin{equation}
+\text{Accuracy} = \frac{1}{|\mathcal{D}_{\text{test}}|} \sum_{(x,y_w,y_l)} \mathbb{I}[r_\phi(x,y_w) > r_\phi(x,y_l)]
+\end{equation}
+
+Typical values: 65-75\% accuracy (compared to 50\% random, 70-80\% human-human agreement).
+
+\textbf{Calibration:} Do the predicted probabilities match empirical frequencies? If the model assigns $\sigma(r_w - r_l) = 0.8$ to many pairs, are 80\% of those actually preferred?
+
+\textbf{Ranking consistency:} For sets of responses $\{y_1, \ldots, y_k\}$, do the reward rankings agree with human preference rankings?
+
+\textbf{Important note on reward scale:} The absolute value of $r_\phi(x,y)$ is arbitrary---only differences matter. We could add any constant $c$ to all rewards without changing preferences: $\sigma((r_w + c) - (r_l + c)) = \sigma(r_w - r_l)$. This is why we optimize for relative reward differences, not absolute scores.
+
+\subsection{Stage 3: Reinforcement Learning Fine-Tuning}
+
+Now comes the RL stage: we use the learned reward model to fine-tune the policy to generate responses humans prefer.
+
+\subsubsection{The RL Problem Formulation}
+
+We can frame language generation as an RL problem:
+
+\begin{itemize}
+\item \textbf{State} $s_t = (x, y_{<t})$: The prompt and tokens generated so far
+\item \textbf{Action} $a_t = y_t$: The next token to generate
+\item \textbf{State transition:} Deterministic---$s_{t+1} = (x, y_{\leq t})$ after appending $y_t$
+\item \textbf{Episode:} One complete response generation
+\item \textbf{Reward:} Provided by the reward model (sparse---only at end of episode)
+\end{itemize}
+
+The policy $\pi_\theta(y_t | x, y_{<t})$ is the language model's next-token distribution.
+
+Our objective is to maximize expected reward:
+\begin{equation}
+J(\theta) = \mathbb{E}_{x \sim \mathcal{D}} \mathbb{E}_{y \sim \pi_\theta(\cdot | x)} [r_\phi(x, y)]
+\end{equation}
+
+However, \textbf{blindly optimizing this objective leads to disaster}.
+
+\subsubsection{The Reward Hacking Problem}
+
+Imagine you train a model to maximize "helpfulness" scores. Without constraints, the model might:
+\begin{itemize}
+\item Generate extremely verbose responses (more text = more chances to be helpful?)
+\item Repeat information excessively
+\item Use patterns that exploit reward model biases
+\item Drift into nonsensical but high-scoring text
+\end{itemize}
+
+This is \textbf{reward hacking} or \textbf{specification gaming}: the model exploits imperfections in the reward model rather than improving genuine quality.
+
+\textbf{Analogy:} You train a robot to clean a room, rewarding it based on how much dirt it collects. The robot learns to dump dirt on the floor, then collect it---maximizing reward without achieving the real goal. The reward model (dirt collected) doesn't perfectly capture your true objective (have a clean room).
+
+In language models, reward hacking manifests as:
+\begin{itemize}
+\item \textbf{Mode collapse:} Generating very similar high-reward responses to every prompt
+\item \textbf{Reward exploitation:} Finding adversarial examples that score high but are actually poor
+\item \textbf{Coherence degradation:} Breaking from natural language patterns in ways the reward model doesn't penalize
+\end{itemize}
+
+\subsubsection{The KL Divergence Constraint}
+
+The solution is to constrain how much the policy can change during RL training. We add a \textbf{KL divergence penalty} that prevents the policy from drifting too far from the SFT initialization:
+
+\begin{equation}
+J_{\text{RLHF}}(\theta) = \mathbb{E}_{x \sim \mathcal{D}} \mathbb{E}_{y \sim \pi_\theta(\cdot | x)} [r_\phi(x, y)] - \beta \cdot \mathbb{D}_{\text{KL}}[\pi_\theta(\cdot|x) \| \pi^{\text{SFT}}(\cdot|x)]
+\end{equation}
+
+Let's unpack each component:
+
+\textbf{Reward term:} $\mathbb{E}[r_\phi(x, y)]$ encourages high reward under the learned reward model.
+
+\textbf{KL penalty:} The Kullback-Leibler divergence measures how different $\pi_\theta$ is from $\pi^{\text{SFT}}$:
+\begin{equation}
+\mathbb{D}_{\text{KL}}[\pi_\theta \| \pi^{\text{SFT}}] = \mathbb{E}_{y \sim \pi_\theta} \left[ \log \frac{\pi_\theta(y|x)}{\pi^{\text{SFT}}(y|x)} \right]
+\end{equation}
+
+This can be computed token-by-token:
+\begin{equation}
+\mathbb{D}_{\text{KL}}[\pi_\theta \| \pi^{\text{SFT}}] = \sum_{t=1}^{T} \mathbb{E}_{y_t \sim \pi_\theta} \left[ \log \frac{\pi_\theta(y_t|x, y_{<t})}{\pi^{\text{SFT}}(y_t|x, y_{<t})} \right]
+\end{equation}
+
+\textbf{Coefficient $\beta$:} Controls the strength of the constraint (typically $\beta \in [0.01, 0.1]$). Higher $\beta$ keeps the policy closer to SFT but limits reward improvement. Lower $\beta$ allows more optimization but risks reward hacking.
+
+\subsubsection{Why KL Divergence?}
+
+The KL penalty serves multiple purposes:
+
+\textbf{Maintaining fluency:} $\pi^{\text{SFT}}$ was trained on high-quality text and generates coherent language. Staying close to $\pi^{\text{SFT}}$ ensures $\pi_\theta$ remains fluent.
+
+\textbf{Trust region:} KL divergence defines a "trust region" around $\pi^{\text{SFT}}$ where the reward model is well-calibrated. The reward model was trained on samples from $\pi^{\text{SFT}}$---its predictions become less reliable far from this distribution.
+
+\textbf{Preventing collapse:} Without the penalty, the policy might collapse to generating a small set of high-reward responses repeatedly.
+
+\textbf{Computational efficiency:} The KL penalty can be computed efficiently during generation without additional forward passes.
+
+\textbf{Mathematical insight:} The KL-constrained objective can be derived from a Bayesian perspective where $\pi^{\text{SFT}}$ represents our prior belief about good responses, and we're performing approximate Bayesian inference with the reward model as the likelihood.
+
+\section{Proximal Policy Optimization (PPO)}
+
+While policy gradient methods like REINFORCE could optimize the RLHF objective, they suffer from high variance and instability---particularly problematic when each "episode" is generating a potentially long text sequence.
+
+\textbf{Proximal Policy Optimization (PPO)} \cite{schulman2017} addresses these challenges and has become the standard algorithm for RLHF. PPO's key innovation: \textbf{preventing destructively large policy updates} through a clipped objective.
+
+\subsection{The Policy Ratio}
+
+PPO operates by collecting experience with the current policy $\pi_{\theta_{\text{old}}}$, then updating to a new policy $\pi_\theta$. Define the \textbf{probability ratio}:
+
+\begin{equation}
+r_t(\theta) = \frac{\pi_\theta(a_t | s_t)}{\pi_{\theta_{\text{old}}}(a_t | s_t)}
+\end{equation}
+
+This ratio measures how much more or less likely the new policy is to take action $a_t$ compared to the old policy:
+\begin{itemize}
+\item $r_t > 1$: New policy favors this action more than old policy
+\item $r_t = 1$: No change in action probability
+\item $r_t < 1$: New policy favors this action less
+\end{itemize}
+
+\subsection{The Clipped Objective}
+
+Standard policy gradient would update using:
+\begin{equation}
+\mathcal{L}^{\text{PG}}(\theta) = \mathbb{E}_t [r_t(\theta) A_t]
+\end{equation}
+
+where $A_t$ is the advantage (we'll discuss this shortly). This encourages increasing the probability of actions with positive advantage.
+
+However, \textbf{nothing prevents $r_t$ from becoming arbitrarily large}, leading to destructively large updates. PPO clips the ratio \cite{schulman2017}:
+
+\begin{equation}
+\mathcal{L}^{\text{CLIP}}(\theta) = \mathbb{E}_t \left[ \min(r_t(\theta) A_t, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon) A_t) \right]
+\end{equation}
+
+where $\epsilon \in [0.1, 0.3]$ is a hyperparameter (typically 0.2).
+
+\textbf{Understanding the clipping}:
+
+\begin{itemize}
+\item $\text{clip}(r_t, 1-\epsilon, 1+\epsilon)$ constrains $r_t$ to the range $[1-\epsilon, 1+\epsilon]$
+\item The $\min(\cdot, \cdot)$ takes the smaller of the clipped and unclipped objectives
+\item For positive advantage ($A_t > 0$): We want to increase action probability, but clip prevents $r_t$ from exceeding $1+\epsilon$
+\item For negative advantage ($A_t < 0$): We want to decrease action probability, but clip prevents $r_t$ from going below $1-\epsilon$
+\end{itemize}
+
+\textbf{Visualization:} Consider the case $A_t > 0$ (good action):
+
+\begin{center}
+\begin{tabular}{|c|c|c|}
+\hline
+$r_t$ range & Unclipped $r_t A_t$ & Clipped objective \\
+\hline
+$r_t < 1-\epsilon$ & Negative (decreasing prob) & 0 (no update) \\
+$1-\epsilon \leq r_t \leq 1+\epsilon$ & $r_t A_t$ & $r_t A_t$ \\
+$r_t > 1+\epsilon$ & Large positive & $(1+\epsilon) A_t$ (capped) \\
+\hline
+\end{tabular}
+\end{center}
+
+The clipping creates a pessimistic bound: we only update when the change is modest and well-controlled.
+
+\subsection{Advantages: Measuring "How Good Was This Action?"}
+
+The advantage function $A_t$ quantifies whether an action was better or worse than expected. Recall from \ref{actor-cirtic-architecture}, the Advantage Function is given by:
+
+\begin{equation}
+A^\pi(s_t, a_t) = Q^\pi(s_t, a_t) - V^\pi(s_t)
+\end{equation}
+
+where:
+\begin{itemize}
+\item $Q^\pi(s_t, a_t)$: Expected return if we take action $a_t$ in state $s_t$, then follow policy $\pi$
+\item $V^\pi(s_t)$: Expected return if we follow policy $\pi$ from state $s_t$
+\item $A^\pi(s_t, a_t)$: How much better is $a_t$ compared to the average action?
+\end{itemize}
+
+For language generation with sparse end-of-episode rewards, we approximate advantages using \textbf{Generalized Advantage Estimation (GAE)} \cite{schulman2016}:
+
+\begin{equation}
+\hat{A}_t = \sum_{l=0}^{\infty} (\gamma \lambda)^l \delta_{t+l}
+\end{equation}
+
+where $\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$ is the temporal difference error.
+
+\textbf{In practice for RLHF}:
+\begin{itemize}
+\item Rewards are sparse: $r_t = 0$ for all timesteps except the final token
+\item At the final token: $r_T = r_\phi(x, y) - \beta \sum_{t=1}^{T} \log \frac{\pi_\theta(y_t|x,y_{<t})}{\pi^{\text{SFT}}(y_t|x,y_{<t})}$
+\item The value function $V_\psi(s_t)$ estimates expected reward-to-go
+\item GAE computes advantages across the sequence
+\end{itemize}
+
+\subsection{The Complete PPO Algorithm for RLHF}
+
+Putting the pieces together, here is the high-level PPO algorithm for RLHF \cite{schulman2017, ouyang2022training}:
+
+\begin{enumerate}
+\item \textbf{Initialize:}
+\begin{itemize}
+\item Policy $\pi_\theta$ from SFT model $\pi^{\text{SFT}}$
+\item Value network $V_\psi$
+\item Fix reference policy $\pi_{\text{ref}} \leftarrow \pi^{\text{SFT}}$
+\item Load trained reward model $r_\phi$
+\end{itemize}
+
+\item \textbf{For each training iteration:}
+
+\textbf{Phase 1: Experience Collection}
+\begin{itemize}
+\item Sample prompts $\{x_1, \ldots, x_B\}$ from dataset
+\item For each prompt $x_i$:
+\begin{itemize}
+\item Generate response: $y_i \sim \pi_\theta(\cdot | x_i)$
+\item Compute reward: $r_i = r_\phi(x_i, y_i)$
+\item Compute KL penalty: $\text{KL}_i = \sum_t \log \frac{\pi_\theta(y_{i,t}|x_i,y_{i,<t})}{\pi_{\text{ref}}(y_{i,t}|x_i,y_{i,<t})}$
+\item Adjusted reward: $\tilde{r}_i = r_i - \beta \cdot \text{KL}_i$
+\item Compute values: $V_\psi(s_{i,t})$ for all timesteps $t$
+\end{itemize}
+\end{itemize}
+
+\textbf{Phase 2: Advantage Estimation}
+\begin{itemize}
+\item Compute GAE advantages $\hat{A}_{i,t}$ for all $(i,t)$ \cite{schulman2016}
+\item Compute returns: $\hat{R}_{i,t} = \hat{A}_{i,t} + V_\psi(s_{i,t})$
+\item Normalize advantages: $\hat{A} \leftarrow (\hat{A} - \mu_A) / \sigma_A$
+\end{itemize}
+
+\textbf{Phase 3: Policy and Value Updates}
+\begin{itemize}
+\item For PPO epoch $= 1$ to $K$:
+\begin{itemize}
+\item For each mini-batch of experience:
+\begin{itemize}
+\item Compute new action probabilities: $\pi_\theta(a_t | s_t)$
+\item Compute ratio: $r_t = \pi_\theta(a_t|s_t) / \pi_{\theta_{\text{old}}}(a_t|s_t)$
+\item Compute clipped objective: $\mathcal{L}^{\text{CLIP}} = \mathbb{E}[\min(r_t \hat{A}_t, \text{clip}(r_t, 1-\epsilon, 1+\epsilon) \hat{A}_t)]$
+\item Compute value loss: $\mathcal{L}^{\text{V}} = \mathbb{E}[(V_\psi(s_t) - \hat{R}_t)^2]$
+\item Compute entropy: $\mathcal{S} = -\mathbb{E}[\pi_\theta \log \pi_\theta]$ (optional regularization)
+\item Combined loss: $\mathcal{L} = -\mathcal{L}^{\text{CLIP}} + c_1 \mathcal{L}^{\text{V}} - c_2 \mathcal{S}$
+\item Update $\theta$ and $\psi$ using gradient descent on $\mathcal{L}$
+\end{itemize}
+\end{itemize}
+\item Update old policy: $\pi_{\theta_{\text{old}}} \leftarrow \pi_\theta$
+\end{itemize}
+\end{enumerate}
+
+\textbf{Key hyperparameters}:
+\begin{itemize}
+\item $\epsilon = 0.2$: Clipping threshold
+\item $K = 4$: Number of PPO epochs per batch of experience
+\item $\beta = 0.02$: KL penalty coefficient
+\item $\gamma = 1.0$: Discount factor (often 1 for episodic language generation)
+\item $\lambda = 0.95$: GAE parameter
+\item $c_1 = 1.0$: Value loss coefficient
+\item $c_2 = 0.01$: Entropy coefficient
+\end{itemize}
+
+\subsection{Computational Challenges}
+
+RLHF training is computationally expensive, requiring careful engineering to make tractable \cite{rajbhandari2020zero, zhao2023pytorch}.
+
+\subsubsection{The Four-Model Problem}
+
+During PPO training, we need four large models simultaneously:
+
+\begin{enumerate}
+\item \textbf{Policy model} $\pi_\theta$: Being trained (requires gradients)
+\item \textbf{Reference model} $\pi^{\text{SFT}}$: For KL penalty (inference only)
+\item \textbf{Reward model} $r_\phi$: For computing rewards (inference only)
+\item \textbf{Value model} $V_\psi$: For computing advantages (requires gradients)
+\end{enumerate}
+
+For a 7B parameter model in FP16:
+\begin{itemize}
+\item Each model: $\sim$14 GB of memory
+\item Total: $\sim$56 GB just for model weights
+\item Add activations, optimizer states: 100+ GB total
+\end{itemize}
+
+\textbf{Solutions}:
+
+\textbf{Model parallelism:} Distribute models across multiple GPUs \cite{rajbhandari2020zero}.
+\begin{itemize}
+\item Policy and value on GPUs 0-3
+\item Reference and reward on GPUs 4-7
+\end{itemize}
+
+\textbf{Quantization:} Use INT8 or INT4 for inference-only models (reference, reward)
+\begin{itemize}
+\item Reduces memory by 2-4$\times$
+\item Minimal impact on inference quality
+\end{itemize}
+
+\textbf{LoRA (Low-Rank Adaptation) \cite{hu2021lora}:} Instead of fine-tuning all parameters, train low-rank adapters:
+\begin{equation}
+W_{\text{new}} = W_{\text{frozen}} + \Delta W = W_{\text{frozen}} + BA
+\end{equation}
+where $B \in \mathbb{R}^{d \times r}$, $A \in \mathbb{R}^{r \times d}$, and $r \ll d$ (typically $r=8$ to $r=64$).
+
+LoRA reduces trainable parameters by 100-1000$\times$, making RLHF tractable on consumer GPUs.
+
+\textbf{Shared value head:} Initialize $V_\psi$ from $\pi_\theta$, sharing most parameters. Only the final value projection head differs.
+
+\subsubsection{Batch Size and Experience}
+
+PPO requires collecting batches of experience (multiple complete generations) before updating. For RLHF:
+
+\textbf{Generation batch size:} 64-512 prompts per iteration
+\begin{itemize}
+\item Larger batches $\rightarrow$ more stable gradients
+\item But: longer time between policy updates
+\item Memory constraints limit batch size
+\end{itemize}
+
+\textbf{Sequence length:} Generated responses are variable length (50-1000+ tokens)
+\begin{itemize}
+\item Pad to maximum length for batching
+\item Wastes computation on padding tokens
+\item Use dynamic batching when possible \cite{dao2022flashattention}
+\end{itemize}
+
+\textbf{Experience replay:} PPO reuses collected experience for $K=4$ epochs
+\begin{itemize}
+\item Improves sample efficiency
+\item But: old experience becomes stale as policy updates
+\item Must balance reuse with staleness
+\end{itemize}
+
+\subsubsection{Training Stability}
+
+RLHF training can be unstable:
+
+\textbf{Reward hacking:} Policy exploits reward model imperfections
+\begin{itemize}
+\item Monitor reward vs. KL divergence
+\item Halt if KL exceeds thresholds
+\item Implement early stopping
+\end{itemize}
+
+\textbf{Value function collapse:} $V_\psi$ fails to predict returns accurately
+\begin{itemize}
+\item Use separate optimizer for value head
+\item Clip value updates
+\item Monitor value loss
+\end{itemize}
+
+\textbf{Policy collapse:} Model generates repetitive or degenerate text
+\begin{itemize}
+\item Increase KL penalty $\beta$
+\item Add entropy regularization
+\item Use temperature sampling ($T > 1$)
+\end{itemize}
+
+\textbf{Typical training curve}:
+\begin{itemize}
+\item Iterations 0-100: Rapid reward increase, moderate KL growth
+\item Iterations 100-500: Slower reward gains, KL stabilizes
+\item Iterations 500+: Diminishing returns, potential overfitting
+\end{itemize}
+
+Monitor these metrics closely and adjust hyperparameters dynamically.
+
+\section{Advanced Topics and Extensions}
+
+\subsection{Direct Preference Optimization (DPO)}
+
+Recent research has shown we can bypass the reward model entirely, simplifying the RLHF pipeline \cite{rafailov2023}.
+
+\subsubsection{The Key Insight}
+
+Recall the KL-constrained RL objective:
+\begin{equation}
+\max_\theta \mathbb{E}_{x,y} [r(x,y)] - \beta \mathbb{D}_{\text{KL}}[\pi_\theta \| \pi_{\text{ref}}]
+\end{equation}
+
+This has a closed-form optimal solution:
+\begin{equation}
+\pi^*(y|x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y|x) \exp\left(\frac{1}{\beta} r(x,y)\right)
+\end{equation}
+
+where $Z(x) = \sum_y \pi_{\text{ref}}(y|x) \exp\left(\frac{1}{\beta} r(x,y)\right)$ is the partition function.
+
+Rearranging to solve for the reward:
+\begin{equation}
+r(x,y) = \beta \log \frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)} + \beta \log Z(x)
+\end{equation}
+
+\subsubsection{The DPO Objective}
+
+Substituting this into the Bradley-Terry model:
+\begin{align}
+P(y_w \succ y_l | x) &= \sigma(r(x,y_w) - r(x,y_l)) \nonumber \\
+&= \sigma\left(\beta \log \frac{\pi^*(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi^*(y_l|x)}{\pi_{\text{ref}}(y_l|x)}\right)
+\end{align}
+
+The partition function $Z(x)$ cancels! This gives us the \textbf{DPO loss} \cite{rafailov2023}:
+
+\begin{equation}
+\mathcal{L}_{\text{DPO}}(\theta) = -\mathbb{E}_{(x,y_w,y_l)} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right) \right]
+\end{equation}
+
+\textbf{Remarkable property:} We can optimize the policy directly from preference data without ever training a reward model!
+
+\textbf{Advantages of DPO}:
+\begin{itemize}
+\item Simpler: No reward model, no RL, just supervised learning on preferences
+\item More stable: No reward hacking, no PPO instabilities
+\item More efficient: Fewer models to train and deploy
+\item Competitive performance: Matches or exceeds PPO in practice
+\end{itemize}
+
+\textbf{Limitations}:
+\begin{itemize}
+\item Less flexible: Can't easily incorporate multiple objectives or constraints
+\item No reward introspection: Can't query "what's the reward of this response?"
+\item Assumes optimal KL-constrained solution (may be restrictive)
+\end{itemize}
+
+DPO has gained rapid adoption for its simplicity and effectiveness, though PPO remains valuable for complex multi-objective optimization.
+
+\subsection{Constitutional AI}
+
+Anthropic's Constitutional AI (CAI) addresses scalability: human preference labeling is expensive and slow \cite{bai2022}. Can we use AI to help supervise itself?
+
+\subsubsection{The Two-Phase Approach}
+
+\textbf{Phase 1: Supervised Learning from Critiques and Revisions}
+
+\begin{enumerate}
+\item Model generates initial response to prompt
+\item Model critiques its own response against constitutional principles:
+\begin{itemize}
+\item "Does this response contain harmful content?"
+\item "Is this response truthful and accurate?"
+\item "Does this response respect human autonomy?"
+\end{itemize}
+\item Model revises response based on critique
+\item Store pairs: $(y_{\text{original}}, y_{\text{revised}})$
+\end{enumerate}
+
+Train the policy via supervised learning to generate revised responses directly:
+\begin{equation}
+\mathcal{L}_{\text{CAI-SL}}(\theta) = -\mathbb{E}_{x} [\log \pi_\theta(y_{\text{revised}} | x)]
+\end{equation}
+
+\textbf{Phase 2: RL from AI Feedback (RLAIF)}
+
+\begin{enumerate}
+\item Generate multiple responses per prompt
+\item Use AI model to compare responses according to constitutional principles
+\item Create preference dataset: $(x, y_w, y_l)$ based on AI judgments
+\item Train reward model on AI preferences
+\item Apply PPO as in standard RLHF
+\end{enumerate}
+
+\subsubsection{Constitutional Principles}
+
+The "constitution" is a set of natural language principles guiding behavior \cite{bai2022}:
+
+\textbf{Harmlessness principles}:
+\begin{itemize}
+\item "Choose the response that is least likely to be considered harmful, offensive, or inappropriate"
+\item "Choose the response that avoids discrimination or stereotyping"
+\end{itemize}
+
+\textbf{Helpfulness principles}:
+\begin{itemize}
+\item "Choose the response that is most helpful, truthful, and honest"
+\item "Choose the response that best answers the question while staying on topic"
+\end{itemize}
+
+\textbf{Key advantage:} Principles are transparent, editable, and auditable. Unlike implicit human preferences, we can inspect and modify the constitution.
+
+\subsubsection{Effectiveness}
+
+Empirical results show:
+\begin{itemize}
+\item AI critique + revision reduces harmful outputs by 50-90\%
+\item RLAIF matches human-labeled RLHF on helpfulness
+\item RLAIF sometimes exceeds human-labeled RLHF on harmlessness (less noisy labels)
+\item Dramatically reduces human labeling costs
+\end{itemize}
+
+\textbf{Open questions}:
+\begin{itemize}
+\item Do AI judgments align with diverse human populations?
+\item Can models effectively critique their own blindspots?
+\item How do we prevent gaming of AI evaluators?
+\end{itemize}
+
+\subsection{Iterative RLHF}
+
+Standard RLHF trains the reward model once on data from $\pi^{\text{SFT}}$. But as the policy improves during RL, it explores new regions of response space. The reward model may become miscalibrated on these new responses.
+
+\subsubsection{The Distribution Shift Problem}
+
+\textbf{Training:} Reward model sees responses from $\pi^{\text{SFT}}$
+
+\textbf{Deployment:} Policy $\pi_\theta$ generates different responses after RL
+
+\textbf{Consequence:} Reward model predictions become less reliable. The policy might exploit these inaccuracies (reward hacking).
+
+\subsubsection{Iterative Training}
+
+\textbf{Solution:} Periodically retrain the reward model on new data \cite{ouyang2022training}:
+
+\begin{enumerate}
+\item Train initial reward model on samples from $\pi^{\text{SFT}}$
+\item Run PPO to optimize policy $\rightarrow \pi_\theta^{(1)}$
+\item Collect new preference data: sample responses from $\pi_\theta^{(1)}$, get human labels
+\item Retrain reward model on combined data: old + new preferences
+\item Run PPO with updated reward model $\rightarrow \pi_\theta^{(2)}$
+\item Repeat...
+\end{enumerate}
+
+\textbf{Benefits}:
+\begin{itemize}
+\item Reward model stays calibrated on current policy distribution
+\item Reduces reward hacking
+\item Enables continuous improvement beyond single RL phase
+\end{itemize}
+
+\textbf{Challenges}:
+\begin{itemize}
+\item Requires ongoing human labeling
+\item More complex training pipeline
+\item Risk of reward model overfitting to recent data
+\end{itemize}
+
+In practice, 2-3 iterations of reward model retraining provide most benefits.
+
+\section{Evaluation and Metrics}
+
+How do we measure whether RLHF actually improves model behavior? \cite{liang2022helm}
+
+\subsection{Reward Model Metrics}
+
+\textbf{Accuracy:} Fraction of preference pairs correctly ranked on held-out test set.
+\begin{equation}
+\text{Acc} = \frac{1}{|\mathcal{D}_{\text{test}}|} \sum_{(x,y_w,y_l)} \mathbb{I}[r_\phi(x,y_w) > r_\phi(x,y_l)]
+\end{equation}
+
+Target: 70-75\% (compared to 70-80\% human-human agreement).
+
+\textbf{Calibration:} Do predicted probabilities match empirical frequencies?
+
+Bin predictions by probability: $[0\text{-}0.1), [0.1\text{-}0.2), \ldots, [0.9\text{-}1.0]$.
+
+For each bin, compute:
+\begin{itemize}
+\item Mean predicted probability: $\bar{p}$
+\item Empirical frequency: $f$ (fraction where $y_w$ was actually preferred)
+\end{itemize}
+
+Well-calibrated: $\bar{p} \approx f$ across bins.
+
+\textbf{Ranking Correlation:} For prompts with $k > 2$ responses, compute ranking correlation between reward model scores and human rankings (Spearman's $\rho$ or Kendall's $\tau$).
+
+\subsection{Policy Evaluation Metrics}
+
+\textbf{Reward Model Score:} Average reward on evaluation prompts.
+\begin{equation}
+\bar{r} = \frac{1}{|\mathcal{D}_{\text{eval}}|} \sum_{x \in \mathcal{D}_{\text{eval}}} r_\phi(x, y) \quad \text{where } y \sim \pi_\theta(\cdot|x)
+\end{equation}
+
+Track reward vs. training iterations---should increase then plateau.
+
+\textbf{KL Divergence from Reference:} Measures policy drift.
+\begin{equation}
+\text{KL} = \mathbb{E}_x \mathbb{E}_{y \sim \pi_\theta} \left[ \log \frac{\pi_\theta(y|x)}{\pi^{\text{SFT}}(y|x)} \right]
+\end{equation}
+
+Monitor to ensure KL stays reasonable ($< 5$-10 nats typically).
+
+\textbf{Perplexity:} Language modeling loss on held-out text.
+\begin{equation}
+\text{Perplexity} = \exp\left(-\frac{1}{N} \sum_{i=1}^{N} \log \pi_\theta(y_i | x_i)\right)
+\end{equation}
+
+Should remain low---if perplexity spikes, the model is losing fluency.
+
+\textbf{Win Rate:} Collect new human preferences comparing RL policy to baseline.
+\begin{equation}
+\text{Win Rate} = \frac{\#(\pi_{\text{RL}} \text{ preferred})}{\#(\text{total comparisons})}
+\end{equation}
+
+Target: 55-65\% (significantly above 50\% random).
+
+\subsection{Human Evaluation}
+
+Automated metrics provide signals, but human evaluation remains the gold standard:
+
+\textbf{Helpfulness:} Does the response adequately address the prompt?
+
+\textbf{Harmlessness:} Does the response avoid problematic content?
+
+\textbf{Honesty:} Does the response avoid hallucination and acknowledge limitations \cite{lin2021truthfulqa}?
+
+\textbf{Coherence:} Is the response well-written and logically structured?
+
+\textbf{Preference:} Overall, which response do you prefer?
+
+Typical protocol:
+\begin{itemize}
+\item Sample 500-1000 evaluation prompts spanning diverse categories
+\item Generate responses from both baseline and RL models
+\item Recruit expert raters (10-50 raters)
+\item Each comparison rated by 3-5 raters
+\item Compute inter-rater agreement (Fleiss' $\kappa$ or Krippendorff's $\alpha$)
+\item Report win rates and confidence intervals
+\end{itemize}
+
+\subsection{Safety Evaluation}
+
+\textbf{Adversarial Testing:} Red-teaming to find problematic outputs.
+\begin{itemize}
+\item Hire adversarial users to try to elicit harmful responses
+\item Maintain database of failure cases
+\item Measure rate of successful attacks: \% of attempts that produce harmful output
+\end{itemize}
+
+\textbf{Demographic Bias:} Test for disparate performance across demographics.
+\begin{itemize}
+\item Does the model respond differently to names suggesting different genders/ethnicities?
+\item Are outputs stereotypical or discriminatory?
+\item Use templates varying only demographic markers
+\end{itemize}
+
+\textbf{Toxicity Detection:} Run outputs through automated toxicity classifiers.
+\begin{itemize}
+\item Tools: Perspective API, Detoxify
+\item Measure: \% of responses flagged as toxic
+\item Target: $< 1$-2\% on neutral prompts
+\end{itemize}
+
+\section{Practical Considerations and Challenges}
+
+\subsection{Data Quality and Annotation}
+
+\textbf{Annotator Agreement:} Low agreement indicates unclear guidelines or subjective preferences.
+
+Typical Fleiss' $\kappa$:
+\begin{itemize}
+\item $\kappa < 0.4$: Poor agreement---revise guidelines
+\item $0.4 \leq \kappa < 0.6$: Moderate agreement---acceptable for initial training
+\item $\kappa \geq 0.6$: Good agreement---high-quality data
+\end{itemize}
+
+\textbf{Guidelines Matter:} Invest heavily in annotator training and documentation.
+\begin{itemize}
+\item Provide clear definitions of quality dimensions
+\item Include positive and negative examples
+\item Regular calibration sessions with annotators
+\item Ongoing communication channel for questions
+\end{itemize}
+
+\textbf{Annotator Diversity:} Preferences vary across demographics and cultures.
+\begin{itemize}
+\item Recruit diverse annotator pool
+\item Consider multiple preference models for different user groups
+\item Be transparent about training data demographics
+\end{itemize}
+
+\subsection{Computational Budget}
+
+RLHF training costs significantly more than supervised fine-tuning:
+
+\textbf{Example (7B parameter model):}
+\begin{itemize}
+\item SFT: 10K examples, 1 epoch, 8$\times$ A100 GPUs, 2 hours $\approx$ \$50
+\item Reward model: 100K comparisons, 1 epoch, 8$\times$ A100 GPUs, 4 hours $\approx$ \$100
+\item PPO: 500 iterations, 8$\times$ A100 GPUs, 20 hours $\approx$ \$500
+\item \textbf{Total:} $\sim$\$650 for RLHF vs. $\sim$\$50 for SFT alone
+\end{itemize}
+
+\textbf{For larger models (70B+ parameters):} Costs scale super-linearly due to memory constraints requiring more parallelism \cite{rajbhandari2020zero, zhao2023pytorch}.
+
+\textbf{Strategies to reduce cost:}
+\begin{itemize}
+\item LoRA \cite{hu2021lora}: Reduces trainable parameters by 100$\times$, cuts costs proportionally
+\item Smaller batch sizes: Trade-off stability for compute
+\item Fewer PPO epochs: Use $K=2$ instead of $K=4$
+\item Shorter training: Stop early based on validation metrics
+\item DPO \cite{rafailov2023}: Simpler training, $\sim$50\% cost reduction vs. PPO
+\end{itemize}
+
+\subsection{Reward Hacking Mitigation}
+
+\textbf{Ensemble Reward Models:} Train multiple reward models and use their average or minimum.
+\begin{equation}
+r_{\text{ensemble}}(x,y) = \min_{i} r_{\phi_i}(x,y) \quad \text{or} \quad \frac{1}{K}\sum_{i=1}^{K} r_{\phi_i}(x,y)
+\end{equation}
+
+Taking the minimum is pessimistic---the policy must satisfy all reward models.
+
+\textbf{Uncertainty Quantification:} Train Bayesian reward models that output uncertainty estimates.
+\begin{itemize}
+\item Penalize high-uncertainty responses
+\item Request human feedback for high-uncertainty cases
+\item Use ensemble variance as uncertainty proxy
+\end{itemize}
+
+\textbf{KL Penalty Tuning:} Increase $\beta$ if reward hacking is detected.
+\begin{itemize}
+\item Start with small $\beta = 0.01$
+\item Monitor for mode collapse or quality degradation
+\item Increase $\beta$ to 0.05-0.1 if issues arise
+\end{itemize}
+
+\textbf{Length Normalization:} Reward models sometimes prefer longer responses.
+\begin{equation}
+r_{\text{normalized}}(x,y) = \frac{r_\phi(x,y)}{|y|^\alpha}
+\end{equation}
+
+where $\alpha \in [0.1, 0.5]$ penalizes length. Tune $\alpha$ based on target length distribution.
+
+\section{Conclusion}
+
+Reinforcement Learning from Human Feedback represents a fundamental advance in AI alignment---enabling us to train models on complex, subjective objectives that resist formal specification. By learning reward functions from comparative human preferences, RLHF has made modern language models dramatically more helpful, harmless, and honest.
+
 % --- References Section ---
 
 \begin{thebibliography}{9}
@@ -4956,6 +6688,37 @@ E.~J. Hu et al., ``LoRA: Low-Rank Adaptation of Large Language Models,'' in \tex
 
 \bibitem{leviathan2023fast}
 Y.~Leviathan, M.~Kalman, and Y.~Matias, ``Fast Inference from Transformers via Speculative Decoding,'' in \textit{Proceedings of the 40th International Conference on Machine Learning (ICML)}, vol.~202, pp.~19274--19286, 2023.
+
+\bibitem{christiano2017}
+Christiano, P., Leike, J., Brown, T. B., Martic, M., Legg, S., \& Amodei, D. (2017). 
+Deep reinforcement learning from human preferences. 
+\textit{Advances in Neural Information Processing Systems}, 30.
+
+\bibitem{stiennon2020}
+Stiennon, N., Ouyang, L., middle, J., Ziegler, D. M., Lowe, R., Voss, C., ... \& Christiano, P. (2020).
+Learning to summarize from human feedback.
+\textit{Advances in Neural Information Processing Systems}, 33, 3008-3021.
+
+\bibitem{bai2022}
+Bai, Y., Jones, A., Ndousse, K., Askell, A., Chen, A., DasSarma, N., ... \& Kaplan, J. (2022).
+Training a helpful and harmless assistant with reinforcement learning from human feedback.
+\textit{arXiv preprint arXiv:2204.05862}.
+
+\bibitem{rafailov2023}
+Rafailov, R., Sharma, A., Mitchell, E., Ermon, S., Manning, C. D., \& Finn, C. (2023).
+Direct preference optimization: Your language model is secretly a reward model.
+\textit{arXiv preprint arXiv:2305.18290}.
+
+\bibitem{schulman2017}
+Schulman, J., Wolski, F., Dhariwal, P., Radford, A., \& Klimov, O. (2017).
+Proximal policy optimization algorithms.
+\textit{arXiv preprint arXiv:1707.06347}.
+
+\bibitem{schulman2016}
+Schulman, J., Moritz, P., Levine, S., Jordan, M., \& Abbeel, P. (2016).
+High-dimensional continuous control using generalized advantage estimation.
+\textit{International Conference on Learning Representations}.
+
 
 \end{thebibliography}
 
