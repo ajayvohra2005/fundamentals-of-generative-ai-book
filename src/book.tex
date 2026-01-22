@@ -4991,23 +4991,20 @@ Now that we have the MDP formalism, we can precisely state what we're trying to 
 
 \textbf{High-Level Goal:} Find the policy $\pi_\theta$ (parameterized by $\theta$) that maximizes the expected cumulative reward over time.
 
-\subsubsection{The Trajectory Distribution}
+\subsubsection{The Trajectory Distribution (Finite Horizon)}
 
 A \emph{trajectory} $\tau$ is a sequence of states and actions:
 \[ \tau = (s_1, a_1, s_2, a_2, \ldots, s_T, a_T) \]
 
-The probability of a particular trajectory under policy $\pi_\theta$ is given by the chain rule of probability:
+The probability of observing a particular trajectory under policy $\pi_\theta$ is determined by the environment dynamics and the policy. We decompose this joint probability using the \textbf{chain rule of probability}, and then simplify it using the \textbf{Markov property} (which assumes that the next state depends only on the current state and action):
 
 \[ p_\theta(\tau) = p_\theta(s_1, a_1, \ldots, s_T, a_T) \]
 
 \emph{Step-by-step breakdown:}
 
 \begin{align}
-p_\theta(\tau) &= p(s_1) \cdot p_\theta(a_1, s_2, \ldots, s_T, a_T | s_1) \\
-&= p(s_1) \cdot \pi_\theta(a_1 | s_1) \cdot p(s_2, a_2, \ldots | s_1, a_1) \\
-&= p(s_1) \cdot \pi_\theta(a_1 | s_1) \cdot p(s_2 | s_1, a_1) \cdot p_\theta(a_2, s_3, \ldots | s_2) \\
-&= \ldots \\
-&= p(s_1) \prod_{t=1}^T \pi_\theta(a_t | s_t) p(s_{t+1} | s_t, a_t)
+p_\theta(\tau) &= p(s_1) \prod_{t=1}^T p(a_t | s_1, a_1, \ldots, s_t) \cdot p(s_{t+1} | s_1, a_1, \ldots, s_t, a_t) && (\text{Chain Rule}) \\
+&= p(s_1) \prod_{t=1}^T \pi_\theta(a_t | s_t) \cdot p(s_{t+1} | s_t, a_t) && (\text{Markov Property})
 \end{align}
 
 \emph{Interpretation:} 
@@ -5018,6 +5015,30 @@ p_\theta(\tau) &= p(s_1) \cdot p_\theta(a_1, s_2, \ldots, s_T, a_T | s_1) \\
 \end{itemize}
 
 The product alternates between policy choices (what we control) and environmental transitions (what we don't control).
+
+\subsubsection{Infinite Horizon Case}
+
+For continuing tasks where the interaction goes on indefinitely (i.e., $T \to \infty$), the trajectory $\tau$ becomes an infinite sequence:
+\[ \tau = (s_1, a_1, s_2, a_2, \ldots) \]
+
+The probability distribution over this infinite trajectory extends the previous derivation by taking the product to infinity:
+
+\begin{align}
+p_\theta(\tau) &= p(s_1) \prod_{t=1}^\infty \pi_\theta(a_t | s_t) \cdot p(s_{t+1} | s_t, a_t)
+\end{align}
+
+\subsubsection{Marginal Probability of State-Action Pairs}
+
+While the trajectory distribution considers the entire sequence, we are often interested in the \emph{marginal probability} of being in a specific state $s_t$ and taking action $a_t$ at time $t$. Using the chain rule, this decomposes as:
+
+\[ p_\theta(s_t, a_t) = \pi_\theta(a_t | s_t) \cdot p_\theta(s_t) \]
+
+Here, $p_\theta(s_t)$ is the state density at time $t$. It is defined recursively using the law of total probability and the Markov property, summing over all paths from the previous time step:
+
+\begin{align}
+p_\theta(s_t) &= \sum_{s_{t-1}} \sum_{a_{t-1}} p(s_t | s_{t-1}, a_{t-1}) \cdot p_\theta(s_{t-1}, a_{t-1}) \\
+&= \sum_{s_{t-1}} \sum_{a_{t-1}} \underbrace{p(s_t | s_{t-1}, a_{t-1})}_{\text{Dynamics}} \cdot \underbrace{\pi_\theta(a_{t-1} | s_{t-1})}_{\text{Policy}} \cdot \underbrace{p_\theta(s_{t-1})}_{\text{Previous State}}
+\end{align}
 
 \subsubsection{Finite Horizon Objective}
 
@@ -5044,27 +5065,27 @@ Many real-world tasks don't have a natural endpoint---a self-driving car should 
 
 When $T \rightarrow \infty$, we need a different approach. We look for a \textbf{stationary distribution} $\mu = p_\theta(s, a)$.
 
-\emph{What is a stationary distribution?} It's a distribution over state-action pairs that remains constant over time. Formally, $\mu$ is stationary if:
+\emph{What is a stationary distribution?} It is a probability distribution over state-action pairs that remains constant over time. If the agent interacts for an infinite horizon using a fixed policy $\pi_\theta$, the state-action distribution may converge to a \emph{stationary distribution} $\mu(s, a)$. As $t \to \infty$, the distribution becomes time-independent ($p(s_{t}, a_{t}) \approx p(s_{t+1}, a_{t+1}) \approx \mu(s,a)$).
 
-\[ \mu(s', a') = \sum_{s,a} \mu(s, a) \pi_\theta(a|s) p(s'|s,a) \]
+Formally, $\mu$ is stationary if it satisfies the balance equation:
 
-\emph{Intuition:} If you run your policy for a very long time, where do you spend most of your time? The stationary distribution answers this. It's the ``equilibrium'' distribution.
+\[ \mu(s', a') = \pi_\theta(a'|s') \sum_{s,a} p(s'|s,a) \mu(s, a) \]
 
-\emph{Compact notation:} We write $\mu = \mathcal{T}\mu$, where $\mathcal{T}$ is viewed as an operator that propagates the distribution forward one time step.
+\emph{Intuition:} If you run your policy for a very long time, what fraction of your total time will you spend in a particular (state, action) pair? The stationary distribution answers this question. It's the ``equilibrium'' distribution.
 
-The infinite horizon objective becomes:
+\emph{Compact notation:} We often write $\mu = \mathcal{T}\mu$, where $\mathcal{T}$ is the transition operator that propagates the distribution forward one time step.
 
-\[ \theta^* = \arg \max_\theta E_{(s,a) \sim p_\theta(s,a)} [r(s,a)] \]
+The infinite horizon objective (specifically the \textbf{Average Reward} formulation) becomes:
+
+\[ \theta^* = \arg \max_\theta \mathbb{E}_{(s,a) \sim \mu(s,a)} [r(s,a)] \]
 
 \emph{Expanded:}
 
 \[ = \arg \max_\theta \sum_{s \in \mathcal{S}} \sum_{a \in \mathcal{A}} \mu(s,a) \cdot r(s,a) \]
 
-\emph{Practical consideration:} We often introduce a discount factor $\gamma \in (0,1)$ to ensure the infinite sum converges:
+\emph{Practical consideration (Discounted Reward):} In practice, we often use a \textbf{discount factor} $\gamma \in (0,1)$ to ensure the sum converges and to prioritize immediate rewards:
 
-\[ \theta^* = \arg \max_\theta E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^\infty \gamma^t r(s_t, a_t) \right] \]
-
-The discount factor also encodes a preference for immediate rewards over delayed rewards (like interest rates in economics).
+\[ \theta^* = \arg \max_\theta \mathbb{E}_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^\infty \gamma^t r(s_t, a_t) \right] \]
 
 \subsection{The Anatomy of an RL Algorithm}
 
