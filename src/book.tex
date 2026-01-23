@@ -6091,63 +6091,71 @@ where:
 \item $A^\pi(s_t, a_t)$: How much better is $a_t$ compared to the average action?
 \end{itemize}
 
-For language generation with sparse end-of-episode rewards, we approximate advantages using \textbf{Generalized Advantage Estimation (GAE)} \cite{schulman2016}:
-
-\begin{equation}
-\hat{A}_t = \sum_{l=0}^{\infty} (\gamma \lambda)^l \delta_{t+l}
-\end{equation}
-
-where $\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$ is the temporal difference error.
-
-\textbf{In practice for RLHF}:
-\begin{itemize}
-\item Rewards are sparse: $r_t = 0$ for all timesteps except the final token
-\item At the final token: $r_T = r_\phi(x, y) - \beta \sum_{t=1}^{T} \log \frac{\pi_\theta(y_t|x,y_{<t})}{\pi^{\text{SFT}}(y_t|x,y_{<t})}$
-\item The value function $V_\psi(s_t)$ estimates expected reward-to-go
-\item GAE computes advantages across the sequence
-\end{itemize}
-
 \begin{algorithm}[H]
-\caption{The Complete PPO Algorithm for RLHF}
-\label{alg:ppo_rlhf}
+\caption{PPO-RLHF: Complete Algorithm with GAE Implementation}
+\label{alg:ppo_rlhf_gae_complete}
 \begin{algorithmic}[1]
 \Require SFT Model $\pi^{\text{SFT}}$, Reward Model $r_\phi$, Dataset $\mathcal{D}$
-\State \textbf{Hyperparameters:} $\epsilon=0.2$ (clip), $\beta=0.02$ (KL), $K=4$ (epochs), $c_1=1.0$ (value), $c_2=0.01$ (entropy)
+\State \textbf{Hyperparameters:} 
+\State \quad $\epsilon=0.2$ (clip), $\beta=0.02$ (KL coef), $K=4$ (epochs)
+\State \quad $\gamma=1.0$ (discount factor), $\lambda=0.95$ (GAE smoothing)
 
 \State \textbf{Initialize:}
 \State \quad Policy $\pi_\theta \leftarrow \pi^{\text{SFT}}$
-\State \quad Reference Policy $\pi_{\text{ref}} \leftarrow \pi^{\text{SFT}}$
+\State \quad Reference Policy $\pi_{\text{ref}} \leftarrow \pi^{\text{SFT}}$ \Comment{Frozen, never updated}
 \State \quad Value Network $V_\psi$
-\State \quad Load trained reward model $r_\phi$
 
 \Repeat \Comment{Main Training Loop}
     \State \textbf{Phase 1: Experience Collection}
+    \State Snapshot policy: $\pi_{\theta_{\text{old}}} \leftarrow \pi_\theta$
     \State Sample prompts $\{x_1, \ldots, x_B\} \sim \mathcal{D}$
+    
     \For{each prompt $x_i$}
-        \State Generate response: $y_i \sim \pi_\theta(\cdot | x_i)$
-        \State Compute reward: $r_i \leftarrow r_\phi(x_i, y_i)$
-        \State Compute KL penalty: $\text{KL}_i \leftarrow \sum_t \log \frac{\pi_\theta(y_{i,t}|x_i,y_{i,<t})}{\pi_{\text{ref}}(y_{i,t}|x_i,y_{i,<t})}$
-        \State Adjusted reward: $\tilde{r}_i \leftarrow r_i - \beta \cdot \text{KL}_i$
-        \State Compute values: $V_\psi(s_{i,t})$ for all timesteps $t$
+        \State Generate sequence $y_i = (y_{i,1}, \ldots, y_{i,T})$ using $\pi_{\theta_{\text{old}}}$
+        \State Compute scalar outcome: $R_{\text{score}} \leftarrow r_\phi(x_i, y_i)$
+        
+        \State \Comment{1. Compute Dense Rewards}
+        \For{each timestep $t = 1 \ldots T$}
+            \State Compute probs: $p_t \leftarrow \pi_{\theta_{\text{old}}}(y_{i,t}|x_i, y_{i,<t})$
+            \State Compute ref: $p_t^{\text{ref}} \leftarrow \pi_{\text{ref}}(y_{i,t}|x_i, y_{i,<t})$
+            \State Store log-prob: $\text{lp}_{i,t}^{\text{old}} \leftarrow \log(p_t)$
+            \State Dense Reward with approximate KL: $r_{i,t} \leftarrow -\beta \cdot \log(p_t / p_t^{\text{ref}})$ 
+        \EndFor
+        \State $r_{i,T} \leftarrow r_{i,T} + R_{\text{score}}$ \Comment{Add score to last token}
+        
+        \State \Comment{2. Compute Values (Forward Pass)}
+        \For{$t = 1 \ldots T$}
+             \State $v_{i,t} \leftarrow V_\psi(x_i, y_{i, <t})$
+        \EndFor
+        \State $v_{i, T+1} \leftarrow 0$ \Comment{Terminal value is 0}
     \EndFor
-
-    \State \textbf{Phase 2: Advantage Estimation}
-    \State Compute GAE advantages $\hat{A}_{i,t}$ for all $(i,t)$ \cite{schulman2016}
-    \State Compute returns: $\hat{R}_{i,t} \leftarrow \hat{A}_{i,t} + V_\psi(s_{i,t})$
-    \State Normalize advantages: $\hat{A} \leftarrow (\hat{A} - \mu_A) / \sigma_A$
+    
+    \State \textbf{Phase 2: Generalized Advantage Estimation (GAE)}
+    \For{each prompt $x_i$}
+        \State Initialize $\text{last\_gae} \leftarrow 0$
+        \State \Comment{Loop Backwards from T down to 1}
+        \For{$t = T \textbf{ down to } 1$}
+            \State $\delta_t \leftarrow r_{i,t} + \gamma v_{i, t+1} - v_{i,t}$ \Comment{TD Error}
+            \State $\hat{A}_{i,t} \leftarrow \delta_t + (\gamma \lambda) \cdot \text{last\_gae}$
+            \State $\text{last\_gae} \leftarrow \hat{A}_{i,t}$
+            \State $\hat{R}_{i,t} \leftarrow \hat{A}_{i,t} + v_{i,t}$ \Comment{Target for Value Net}
+        \EndFor
+    \EndFor
+    
+    \State \Comment{Normalize Advantages across whole batch}
+    \State $\hat{A} \leftarrow \frac{\hat{A} - \text{mean}(\hat{A})}{\text{std}(\hat{A}) + 10^{-8}}$
 
     \State \textbf{Phase 3: Policy and Value Updates}
     \For{epoch $k = 1$ to $K$}
-        \For{each mini-batch of experience}
-            \State Compute new probabilities: $\pi_\theta(a_t | s_t)$
-            \State Ratio: $r_t(\theta) \leftarrow \frac{\pi_\theta(a_t|s_t)}{\pi_{\theta_{\text{old}}}(a_t|s_t)}$
-            \State $\mathcal{L}^{\text{CLIP}} \leftarrow \mathbb{E}[\min(r_t \hat{A}_t, \text{clip}(r_t, 1-\epsilon, 1+\epsilon) \hat{A}_t)]$
-            \State $\mathcal{L}^{\text{V}} \leftarrow \mathbb{E}[(V_\psi(s_t) - \hat{R}_t)^2]$
-            \State $\mathcal{L} \leftarrow -\mathcal{L}^{\text{CLIP}} + c_1 \mathcal{L}^{\text{V}} - c_2 \mathcal{S}$ \Comment{Combined Loss}
-            \State Update $\theta$ and $\psi$ via gradient descent on $\mathcal{L}$
+        \For{each mini-batch of timesteps $(x, y_{<t}, y_t, \hat{A}_t, \hat{R}_t, \text{lp}^{\text{old}}_t)$}
+            \State New log-prob: $\text{lp}_t \leftarrow \log \pi_\theta(y_t|x, y_{<t})$
+            \State Ratio: $r_t(\theta) \leftarrow \exp(\text{lp}_t - \text{lp}^{\text{old}}_t)$
+            \State $\mathcal{L}^{\text{CLIP}} \leftarrow \mathbb{E}[-\min(r_t \hat{A}_t, \text{clip}(r_t, 1-\epsilon, 1+\epsilon) \hat{A}_t)]$
+            \State $\mathcal{L}^{\text{V}} \leftarrow \mathbb{E}[(V_\psi(x, y_{<t}) - \hat{R}_t)^2]$
+            \State $\mathcal{L} \leftarrow \mathcal{L}^{\text{CLIP}} + c_1 \mathcal{L}^{\text{V}}$
+            \State Update $\theta, \psi$ via gradient descent on $\mathcal{L}$
         \EndFor
     \EndFor
-    \State Update old policy: $\pi_{\theta_{\text{old}}} \leftarrow \pi_\theta$
 \Until{converged}
 \end{algorithmic}
 \end{algorithm}
