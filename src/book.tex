@@ -4366,26 +4366,32 @@ where $M$ is SRAM size (typically 100-200 KB).
 \State Set $B_c \leftarrow \lceil M / 4d \rceil$ and $B_r \leftarrow \min(\lceil M / 4d \rceil, d)$
 \State Set $T_c \leftarrow \lceil N / B_c \rceil$ and $T_r \leftarrow \lceil N / B_r \rceil$
 \State Initialize output $\mathbf{O} \in \mathbb{R}^{N \times d}$ in HBM to zeros
-\State Initialize sum $\ell \in \mathbb{R}^N$ to zeros, max $m \in \mathbb{R}^N$ to $-\infty$ \Comment{Crucial for max logic}
+\State Initialize sum $\ell \in \mathbb{R}^N$ to zeros, max $m \in \mathbb{R}^N$ to $-\infty$ 
 
 \State \textbf{2. Outer Loop (Key/Value Blocks):}
 \For{$j = 1$ to $T_c$}
-    \State Load $\mathbf{K}_j, \mathbf{V}_j$ from HBM $\to$ SRAM \Comment{Load once, reuse multiple times}
+    \State Load $\mathbf{K}_j, \mathbf{V}_j$ from HBM $\to$ SRAM 
     
     \State \textbf{3. Inner Loop (Query Blocks):}
     \For{$i = 1$ to $T_r$}
         \State Load $\mathbf{Q}_i, \mathbf{O}_i, \ell_i, m_i$ from HBM $\to$ SRAM
         
-        \State \Comment{Compute attention scores in SRAM}
+        \State \Comment{1. Compute pairwise scores and local statistics}
         \State $\mathbf{S}_{ij} \leftarrow \mathbf{Q}_i \mathbf{K}_j^T$
+        \State $\tilde{m}_{ij} \leftarrow \text{rowmax}(\mathbf{S}_{ij})$
+        \State $\tilde{P}_{ij} \leftarrow \exp(\mathbf{S}_{ij} - \tilde{m}_{ij})$
+        \State $\tilde{\ell}_{ij} \leftarrow \text{rowsum}(\tilde{P}_{ij})$
         
-        \State \Comment{Online Softmax Updates}
-        \State $m_{i}^{\text{new}} \leftarrow \max(m_i, \text{rowmax}(\mathbf{S}_{ij}))$
-        \State $P_{ij} \leftarrow \exp(\mathbf{S}_{ij} - m_{i}^{\text{new}})$ \Comment{Unnormalized probs}
-        \State $\ell_{i}^{\text{new}} \leftarrow \exp(m_i - m_{i}^{\text{new}}) \odot \ell_i + \text{rowsum}(P_{ij})$
+        \State \Comment{2. Update global max and global sum}
+        \State $m_{i}^{\text{new}} \leftarrow \max(m_i, \tilde{m}_{ij})$
+        \State $\ell_{i}^{\text{new}} \leftarrow \exp(m_i - m_{i}^{\text{new}}) \ell_i + \exp(\tilde{m}_{ij} - m_{i}^{\text{new}}) \tilde{\ell}_{ij}$
         
-        \State \Comment{Accumulate Output}
-        \State $\mathbf{O}_i \leftarrow \text{diag}(\ell_i^{\text{new}})^{-1} \left( \text{diag}(\ell_i \odot \exp(m_i - m_i^{\text{new}})) \mathbf{O}_i + P_{ij} \mathbf{V}_j \right)$
+        \State \Comment{3. Update Output (Re-scaling previous output + adding new)}
+        \State $\mathbf{O}_i \leftarrow \text{diag}(\ell_i^{\text{new}})^{-1} \left( \text{diag}(\ell_i) \exp(m_i - m_i^{\text{new}}) \mathbf{O}_i + \exp(\tilde{m}_{ij} - m_i^{\text{new}}) \tilde{P}_{ij} \mathbf{V}_j \right)$
+        
+        \State \Comment{4. Update running statistics}
+        \State $\ell_i \leftarrow \ell_{i}^{\text{new}}$
+        \State $m_i \leftarrow m_{i}^{\text{new}}$
         
         \State Write $\mathbf{O}_i, \ell_i, m_i$ back to HBM
     \EndFor
@@ -4414,7 +4420,7 @@ Recall that the numerically stable \textbf{Standard Softmax} for a vector $\math
 To compute this, one normally needs access to the entire vector $\mathbf{x}$ to find $m$ and the sum. Flash Attention avoids this by updating these statistics incrementally ("Online Softmax").
 
 \subsubsection*{1. Tiling Configuration}
-To make the explanation concrete, let us assume a standard sequence length ($N=2048$) and head dimension ($d=64$). We determine our block sizes based on the available SRAM ($M=128$ KB) using FP16 precision (2 bytes).
+To make the explanation concrete, let us assume a standard sequence length ($N=2048$) and head dimension ($d=64$). We determine our block sizes based on the available SRAM ($M=128$ KB).
 
 \begin{table}[H]
 \centering
@@ -4431,17 +4437,17 @@ Head Dimension ($d$) & 64 & Standard transformer head size \\
 SRAM Size ($M$) & 131,072 & 128 KB (Typical per-SM memory) \\
 \hline
 \textbf{Block Sizes} & & \\
-Col Block ($B_c$) & \textbf{256} & $B_c = \lceil \frac{M}{4 \cdot d \cdot 2} \rceil = \frac{131072}{512}$ \\
-Row Block ($B_r$) & \textbf{64} & $B_r = \min(B_c, d) = \min(256, 64)$ \\
+Col Block ($B_c$) & \textbf{512} & $B_c = \lceil \frac{M}{4 \cdot d} \rceil = \frac{131072}{256}$ \\
+Row Block ($B_r$) & \textbf{64} & $B_r = \min(B_c, d) = \min(512, 64)$ \\
 \hline
 \textbf{Grid Size} & & \\
-KV Splits ($T_c$) & \textbf{8} & $T_c = \lceil N / B_c \rceil = 2048 / 256$ \\
+KV Splits ($T_c$) & \textbf{4} & $T_c = \lceil N / B_c \rceil = 2048 / 512$ \\
 Query Splits ($T_r$) & \textbf{32} & $T_r = \lceil N / B_r \rceil = 2048 / 64$ \\
 \hline
 \end{tabular}
 \end{table}
 
-This configuration splits the large $2048 \times 2048$ attention matrix into smaller tiles that fit entirely in fast memory, requiring $T_r \times T_c = 32 \times 8 = 256$ total block operations.
+This configuration splits the large $2048 \times 2048$ attention matrix into smaller tiles that fit entirely in fast memory, requiring $T_r \times T_c = 32 \times 4 = 128$ total block operations.
 
 \subsubsection*{2. Visualizing Online Softmax Updates}
 How do we calculate the global max and sum if we process data in chunks? We use the "Online Softmax" rescaling trick.
