@@ -2021,14 +2021,35 @@ DDP is the most straightforward parallelization approach: replicate the entire m
     \label{fig:ddp}
 \end{figure}
 
-\textbf{Algorithm:}
-\begin{enumerate}
-\item Initialize: Each GPU holds a complete copy of the model with identical weights
-\item Forward pass: Each GPU processes its assigned mini-batch independently
-\item Backward pass: Each GPU computes gradients for its mini-batch
-\item Synchronization: All-Reduce sums gradients across all GPUs
-\item Update: Each GPU updates its local model copy using the averaged gradients
-\end{enumerate}
+\begin{algorithm}[H]
+\caption{Distributed Data Parallel (DDP) Training}
+\label{alg:ddp_training}
+\begin{algorithmic}[1]
+\Require Dataset $\mathcal{D}$, Model Parameters $\theta$, Learning Rate $\eta$, Number of GPUs $N$
+
+\State \textbf{1. Initialize:}
+\State Broadcast parameters $\theta$ to all GPUs $\{1, \ldots, N\}$ so $\theta_1 = \theta_2 = \dots = \theta_N$
+
+\Repeat
+    \State \textbf{Parallel Execution:} \Comment{Steps 2 \& 3 happen on all GPUs simultaneously}
+    \For{each GPU $k \in \{1, \ldots, N\}$ \textbf{in parallel}}
+        \State Sample mini-batch $B_k \sim \mathcal{D}$
+        \State Forward pass: Compute Loss $\mathcal{L}_k$ on $B_k$
+        \State Backward pass: Compute local gradients $g_k \leftarrow \nabla_\theta \mathcal{L}_k$
+    \EndFor
+
+    \State \textbf{4. Synchronization:}
+    \State \Comment{Aggregates gradients from all GPUs}
+    \State $g_{\text{global}} \leftarrow \text{All-ReduceSum}(g_1, \ldots, g_N)$ 
+    \State $g_{\text{avg}} \leftarrow g_{\text{global}} / N$
+
+    \State \textbf{5. Update:}
+    \For{each GPU $k \in \{1, \ldots, N\}$ \textbf{in parallel}}
+        \State Update local parameters: $\theta_k \leftarrow \theta_k - \eta \cdot g_{\text{avg}}$
+    \EndFor
+\Until{converged}
+\end{algorithmic}
+\end{algorithm}
 
 Mathematically, if GPU $i$ computes gradients $\nabla_i$ on its mini-batch, the synchronized gradient is:
 
@@ -4281,14 +4302,35 @@ Compute MoE output as weighted combination:
 
 Standard attention computation is memory-bound rather than compute-bound. The bottleneck is not the arithmetic operations, but reading and writing intermediate results to GPU High Bandwidth Memory (HBM).
 
-\textbf{Standard attention algorithm:}
-\begin{enumerate}
-\item Compute $\mathbf{S} = \mathbf{Q}\mathbf{K}^T$ → write $(s \times s)$ matrix to HBM
-\item Apply mask and compute $\mathbf{P} = \text{softmax}(\mathbf{S})$ → read $\mathbf{S}$, write $\mathbf{P}$ to HBM
-\item Compute $\mathbf{O} = \mathbf{P}\mathbf{V}$ → read $\mathbf{P}$, compute, write result
-\end{enumerate}
+\begin{algorithm}[H]
+\caption{Standard Self-Attention (Memory Bound)}
+\label{alg:standard_attention}
+\begin{algorithmic}[1]
+\Require Sequence length $N$, Head dimension $d$
+\Require High Bandwidth Memory (HBM)
+\Require Query $\mathbf{Q}$, Key $\mathbf{K}$, Value $\mathbf{V},  \in \mathbb{R}^{N \times d}$
 
-For sequence length $s = 2048$ and head dimension $d = 64$:
+\State \textbf{Step 1: Similarity Calculation}
+\State Load $\mathbf{Q}, \mathbf{K}$ from HBM
+\State Compute scores: $\mathbf{S} \leftarrow \mathbf{Q}\mathbf{K}^T$
+\State Write $\mathbf{S} \in \mathbb{R}^{N \times N}$ to HBM \Comment{Expensive Write: $O(N^2)$}
+
+\State \textbf{Step 2: Softmax Normalization}
+\State Read $\mathbf{S}$ from HBM
+\State Apply mask (if causal)
+\State Compute probabilities: $\mathbf{P} \leftarrow \text{softmax}(\mathbf{S})$
+\State Write $\mathbf{P} \in \mathbb{R}^{N \times N}$ to HBM \Comment{Expensive Write: $O(N^2)$}
+
+\State \textbf{Step 3: Weighted Aggregation}
+\State Read $\mathbf{P}, \mathbf{V}$ from HBM
+\State Compute output: $\mathbf{O} \leftarrow \mathbf{P}\mathbf{V}$
+\State Write $\mathbf{O} \in \mathbb{R}^{N \times d}$ to HBM
+
+\State \Return $\mathbf{O}$
+\end{algorithmic}
+\end{algorithm}
+
+For sequence length $N = 2048$ and head dimension $d = 64$:
 \begin{itemize}
 \item $\mathbf{S}$: $2048 \times 2048 \times 4$ bytes $= 16$ MB
 \item $\mathbf{P}$: $2048 \times 2048 \times 4$ bytes $= 16$ MB
@@ -4313,41 +4355,180 @@ B_c = \left\lceil \frac{M}{4d} \right\rceil, \quad B_r = \min\left(\left\lceil \
 
 where $M$ is SRAM size (typically 100-200 KB).
 
-\textbf{Algorithm:}
-\begin{enumerate}
-\item Divide $\mathbf{Q}$ into $T_r = \lceil N/B_r \rceil$ blocks, $\mathbf{K}, \mathbf{V}$ into $T_c = \lceil N/B_c \rceil$ blocks
-\item Outer loop over $\mathbf{K}, \mathbf{V}$ blocks (index $j$)
-\item Inner loop over $\mathbf{Q}$ blocks (index $i$)
-\item For each $(i,j)$ block pair:
-   \begin{itemize}
-   \item Load $\mathbf{Q}_i, \mathbf{K}_j, \mathbf{V}_j$ into SRAM
-   \item Compute $\mathbf{S}_{ij} = \mathbf{Q}_i \mathbf{K}_j^T$ in SRAM
-   \item Apply mask and compute local softmax
-   \item Update running statistics for global softmax
-   \item Compute contribution to output and accumulate
-   \end{itemize}
-\item Final output is correctly normalized attention
-\end{enumerate}
+\begin{algorithm}[H]
+\caption{Flash Attention (Tiled \& Memory Efficient)}
+\label{alg:flash_attention_fixed}
+\begin{algorithmic}[1]
+\Require Sequence length $N$, Head dimension $d$, SRAM size $M$
+\Require Matrices $\mathbf{Q}, \mathbf{K}, \mathbf{V} \in \mathbb{R}^{N \times d}$ in HBM
+
+\State \textbf{1. Tiling setup:}
+\State Set $B_c \leftarrow \lceil M / 4d \rceil$ and $B_r \leftarrow \min(\lceil M / 4d \rceil, d)$
+\State Set $T_c \leftarrow \lceil N / B_c \rceil$ and $T_r \leftarrow \lceil N / B_r \rceil$
+\State Initialize output $\mathbf{O} \in \mathbb{R}^{N \times d}$ in HBM to zeros
+\State Initialize sum $\ell \in \mathbb{R}^N$ to zeros, max $m \in \mathbb{R}^N$ to $-\infty$ \Comment{Crucial for max logic}
+
+\State \textbf{2. Outer Loop (Key/Value Blocks):}
+\For{$j = 1$ to $T_c$}
+    \State Load $\mathbf{K}_j, \mathbf{V}_j$ from HBM $\to$ SRAM \Comment{Load once, reuse multiple times}
+    
+    \State \textbf{3. Inner Loop (Query Blocks):}
+    \For{$i = 1$ to $T_r$}
+        \State Load $\mathbf{Q}_i, \mathbf{O}_i, \ell_i, m_i$ from HBM $\to$ SRAM
+        
+        \State \Comment{Compute attention scores in SRAM}
+        \State $\mathbf{S}_{ij} \leftarrow \mathbf{Q}_i \mathbf{K}_j^T$
+        
+        \State \Comment{Online Softmax Updates}
+        \State $m_{i}^{\text{new}} \leftarrow \max(m_i, \text{rowmax}(\mathbf{S}_{ij}))$
+        \State $P_{ij} \leftarrow \exp(\mathbf{S}_{ij} - m_{i}^{\text{new}})$ \Comment{Unnormalized probs}
+        \State $\ell_{i}^{\text{new}} \leftarrow \exp(m_i - m_{i}^{\text{new}}) \odot \ell_i + \text{rowsum}(P_{ij})$
+        
+        \State \Comment{Accumulate Output}
+        \State $\mathbf{O}_i \leftarrow \text{diag}(\ell_i^{\text{new}})^{-1} \left( \text{diag}(\ell_i \odot \exp(m_i - m_i^{\text{new}})) \mathbf{O}_i + P_{ij} \mathbf{V}_j \right)$
+        
+        \State Write $\mathbf{O}_i, \ell_i, m_i$ back to HBM
+    \EndFor
+\EndFor
+
+\State \Return $\mathbf{O}$
+\end{algorithmic}
+\end{algorithm}
 
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.7\textwidth]{images/flash_attn.png}
-    \caption{Flash Attention Algorithm}
+    \caption{Visualizing Flash Attention Algorithm}
     \label{fig:flash_attn}
 \end{figure}
 
-\textbf{Memory savings:}
-\begin{equation}
-\text{HBM accesses (Flash)} = O(N^2 d^2 M^{-1})
-\end{equation}
+\subsection*{Understanding Flash Attention: Tiling and Online Softmax}
 
-versus standard attention:
-\begin{equation}
-\text{HBM accesses (Standard)} = O(N^2)
-\end{equation}
+The core innovation of Flash Attention is the ability to compute the softmax function without seeing the entire row of data at once. 
 
-For $N = 2048, d = 64, M = 100$ KB, Flash Attention reduces HBM traffic by approximately $7 \times$.
+Recall that the numerically stable \textbf{Standard Softmax} for a vector $\mathbf{x}$ is defined as:
+\begin{equation}
+\text{softmax}(\mathbf{x})_i = \frac{e^{x_i - m}}{\sum_{j} e^{x_j - m}} \quad \text{where } m = \max(\mathbf{x})
+\end{equation}
+To compute this, one normally needs access to the entire vector $\mathbf{x}$ to find $m$ and the sum. Flash Attention avoids this by updating these statistics incrementally ("Online Softmax").
+
+\subsubsection*{1. Tiling Configuration}
+To make the explanation concrete, let us assume a standard sequence length ($N=2048$) and head dimension ($d=64$). We determine our block sizes based on the available SRAM ($M=128$ KB) using FP16 precision (2 bytes).
+
+\begin{table}[H]
+\centering
+\caption{Flash Attention Tiling Parameters ($M=128$ KB)}
+\label{tab:flash_tiling}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{|l|c|l|}
+\hline
+\textbf{Parameter} & \textbf{Value} & \textbf{Calculation Logic} \\
+\hline
+\textbf{Inputs} & & \\
+Sequence Length ($N$) & 2048 & Assumed context window \\
+Head Dimension ($d$) & 64 & Standard transformer head size \\
+SRAM Size ($M$) & 131,072 & 128 KB (Typical per-SM memory) \\
+\hline
+\textbf{Block Sizes} & & \\
+Col Block ($B_c$) & \textbf{256} & $B_c = \lceil \frac{M}{4 \cdot d \cdot 2} \rceil = \frac{131072}{512}$ \\
+Row Block ($B_r$) & \textbf{64} & $B_r = \min(B_c, d) = \min(256, 64)$ \\
+\hline
+\textbf{Grid Size} & & \\
+KV Splits ($T_c$) & \textbf{8} & $T_c = \lceil N / B_c \rceil = 2048 / 256$ \\
+Query Splits ($T_r$) & \textbf{32} & $T_r = \lceil N / B_r \rceil = 2048 / 64$ \\
+\hline
+\end{tabular}
+\end{table}
+
+This configuration splits the large $2048 \times 2048$ attention matrix into smaller tiles that fit entirely in fast memory, requiring $T_r \times T_c = 32 \times 8 = 256$ total block operations.
+
+\subsubsection*{2. Visualizing Online Softmax Updates}
+How do we calculate the global max and sum if we process data in chunks? We use the "Online Softmax" rescaling trick.
+
+Consider a simplified single row of attention scores $\mathbf{x} = [10, 20, 30]$ processed in two steps.
+\begin{itemize}
+    \item \textbf{Step 1:} We see block $[10, 20]$.
+    \item \textbf{Step 2:} We see block $[30]$.
+\end{itemize}
+
+The table below traces the state variables stored in HBM ($m$ and $\ell$) as the algorithm progresses.
+
+\begin{table}[H]
+\centering
+\caption{Trace of Online Softmax State Variables}
+\label{tab:online_softmax_trace}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|c|c|c|c|c|l|}
+\hline
+\textbf{Step} & \textbf{Input Block} & \textbf{Local Max} & \textbf{Global Max ($m$)} & \textbf{Global Sum ($\ell$)} & \textbf{Action taken} \\
+\hline
+1 & $[10, 20]$ & 20 & \textbf{20} & $\approx 1.000045$ & Initial calc relative to $20$. \\
+ & & & & & $(e^{10-20} + e^{20-20})$ \\
+\hline
+2 & $[30]$ & 30 & \textbf{30} & $\approx 1.000045$ & \textbf{Rescale and Update:} \\
+ & & & & & 1. Correction factor: $e^{20 - 30} = e^{-10}$ \\
+ & & & & & 2. Shrink old sum: $\ell_{old} \cdot e^{-10}$ \\
+ & & & & & 3. Add new term: $+ e^{30-30}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{The Rescaling Math (Line 19):}
+When Step 2 reveals a new max ($30$), we do not need to re-read Step 1's data. We simply multiply Step 1's accumulated results by the correction factor:
+$$ \ell_{new} = (\ell_{old} \times e^{m_{old} - m_{new}}) + \sum e^{x_{new} - m_{new}} $$
+This ensures the final result is numerically identical to standard softmax without ever holding the vector $[10, 20, 30]$ in memory at once. Flash Attention reduces the memory traffic from quadratic to linear with respect to sequence length in terms of HBM reads/writes.
+\begin{itemize}
+    \item \textbf{Standard Attention:} $O(N^2)$ HBM accesses.
+    \item \textbf{Flash Attention:} $O(N^2 d^2 M^{-1})$ HBM accesses.
+\end{itemize}
+
+For our configuration ($N = 2048, d = 64, M = 100$ KB), Flash Attention reduces HBM traffic by approximately \textbf{$7 \times$}, which is the primary driver of its wall-clock speedup.
+
+\subsection*{Attention on CPUs: Architectural Differences}
+
+While Flash Attention and Low-Precision (FP16/BF16) training are dominant on GPUs, the landscape changes significantly when running inference on CPUs.
+
+\subsubsection*{1. Precision: Why FP32 is often faster than FP16 on CPUs}
+On NVIDIA GPUs, Tensor Cores are physically designed to execute FP16/BF16 matrix multiplications $8\times$ to $16\times$ faster than FP32. However, on many CPUs (especially standard x86 consumer architectures prior to AVX-512 BF16 support), the opposite is often true: \textbf{FP32 is faster.}
+
+\begin{itemize}
+    \item \textbf{Native Execution Units:} Most CPU SIMD registers (AVX2, AVX-512) are optimized for 32-bit floating point operations.
+    \item \textbf{The Casting Overhead:} If a CPU lacks native FP16 instructions, it must emulate FP16 arithmetic. To perform an addition $A + B$ in FP16, the CPU must:
+    \begin{enumerate}
+        \item Load 16-bit $A, B$ from memory.
+        \item \textbf{Cast} (expand) them to 32-bit registers.
+        \item Perform the addition in FP32.
+        \item \textbf{Cast} (truncate) the result back to 16-bit.
+    \end{enumerate}
+    This casting overhead consumes more clock cycles than simply staying in FP32, negating the memory bandwidth savings of the smaller format.
+\end{itemize}
+
+\textit{Note: Modern server CPUs (e.g., Intel Sapphire Rapids with AMX) now include native BF16 acceleration, bringing GPU-like behavior to CPUs, but standard FP32 remains the high-performance baseline for general computing.}
+
+\subsubsection*{2. The Memory Constraint: Bandwidth vs. Latency}
+GPUs suffer from the \textbf{HBM Capacity Constraint} (e.g., 80GB limit), but enjoy massive bandwidth (2--3 TB/s). CPUs are the inverse.
+\begin{itemize}
+    \item \textbf{No HBM Constraint:} CPUs can access Terabytes of DDR4/DDR5 system RAM, allowing them to process massive sequence lengths ($N > 100k$) that would OOM (Out of Memory) a GPU.
+    \item \textbf{The Bandwidth Wall:} The bottleneck on CPU is \textbf{Memory Bandwidth}. A dual-channel DDR5 setup provides $\approx 100$ GB/s, which is $20\times$ slower than HBM. 
+    \item \textbf{Implication for Attention:} Standard attention ($O(N^2)$ reads) is devastatingly slow on CPU because the arithmetic logic units (ALUs) spend most of their time waiting for data to arrive from RAM.
+\end{itemize}
+
+\subsubsection*{3. Flash Attention on CPUs?}
+Is there a "Flash Attention" for CPUs?
+\begin{itemize}
+    \item \textbf{The Library:} The official \texttt{flash-attention} CUDA library does not run on CPUs.
+    \item \textbf{The Algorithm:} The \textit{concept} of Tiling and Online Softmax is highly relevant to CPUs, but for a different reason: \textbf{Cache Blocking}.
+\end{itemize}
+
+Decades before Flash Attention, CPU BLAS libraries (like Intel MKL or OpenBLAS) utilized "blocking" to keep matrix tiles inside the L1/L2 caches (the CPU equivalent of SRAM). 
+
+\textbf{Current Implementations:}
+\begin{itemize}
+    \item \textbf{PyTorch SDPA:} The \texttt{scaled\_dot\_product\_attention} function in PyTorch 2.0+ includes optimized C++ kernels for CPU that utilize fusion and tiling similar to Flash Attention.
+\end{itemize}
+
+While we do not call it "Flash Attention" in the CPU world, the principle of fusing operations to avoid writing intermediate $N \times N$ matrices to slow main memory is the standard optimization strategy for high-performance CPU inference.
 
 \subsection{Impact on Inference}
 
@@ -4409,19 +4590,98 @@ Naive quantization often degrades model quality, especially for large models. AW
 
 \textbf{Key insight:} Not all weights are equally important. Salient weights (those with high activation magnitudes) should be quantized more carefully.
 
-\textbf{AWQ algorithm:}
-\begin{enumerate}
-\item Run the model on calibration data to measure activation magnitudes
-\item Identify salient weight channels (those with large activations)
-\item Apply per-channel scaling to protect salient weights:
-   \begin{equation}
-   \mathbf{W}_{quantized} = \text{Quantize}(\mathbf{W} \odot \mathbf{s})
-   \end{equation}
-   where $\mathbf{s}$ is a learned per-channel scale vector
-\item During inference, compensate with activation scaling
-\end{enumerate}
+\begin{algorithm}[H]
+\caption{AWQ: Activation-aware Weight Quantization}
+\label{alg:awq}
+\begin{algorithmic}[1]
+\Require Pre-trained Model Weights $\mathbf{W}$, Calibration Dataset $\mathcal{D}_{\text{calib}}$
+\Require Search space for hyperparameter $\alpha$ (e.g., $[0, 0.1, \ldots, 1.0]$)
 
-\textbf{Results:} AWQ enables INT4 quantization with minimal quality degradation, reducing memory by $8\times$ compared to FP32 and $4\times$ compared to FP16.
+\State \textbf{Phase 1: Calibration (Profiling)}
+\State Forward pass batch $X \sim \mathcal{D}_{\text{calib}}$ through model
+\State Compute activation magnitudes per channel:
+\State $\mathbf{x}_{\text{mag}} \leftarrow \text{mean}(|X_{\text{calib}}| \text{ across batch}, \text{dim}=0)$
+
+\State \textbf{Phase 2: Optimal Scale Search}
+\State Initialize best error $\mathcal{E}^* \leftarrow \infty$, optimal scales $\mathbf{s}^* \leftarrow \mathbf{1}$
+\For{each candidate $\alpha$ in search space}
+    \State Compute candidate scales: $\mathbf{s} \leftarrow (\mathbf{x}_{\text{mag}})^\alpha$
+    \State Apply scales: $\mathbf{W}' \leftarrow \mathbf{W} \odot \mathbf{s}$ and $X' \leftarrow X \oslash \mathbf{s}$
+    \State Pseudo-quantize: $\hat{\mathbf{W}} \leftarrow \text{Quantize}(\mathbf{W}')$
+    \State Compute Reconstruction Error: $\mathcal{E} \leftarrow \|\mathbf{W}X - \hat{\mathbf{W}}X'\|_2^2$
+    \If{$\mathcal{E} < \mathcal{E}^*$}
+        \State $\mathcal{E}^* \leftarrow \mathcal{E}$, $\mathbf{s}^* \leftarrow \mathbf{s}$
+    \EndIf
+\EndFor
+
+\State \textbf{Phase 3: Apply and Fuse (The Speedup Trick)}
+\State Scale weights: $\mathbf{W}_{\text{final}} \leftarrow \mathbf{W} \odot \mathbf{s}^*$
+\State \Comment{Merge inverse scale into previous LayerNorm to avoid overhead}
+\State $\mathbf{W}_{\text{prev\_ln}} \leftarrow \mathbf{W}_{\text{prev\_ln}} \oslash \mathbf{s}^*$
+\State $\mathbf{b}_{\text{prev\_ln}} \leftarrow \mathbf{b}_{\text{prev\_ln}} \oslash \mathbf{s}^*$
+
+\State \textbf{Phase 4: Final Quantization}
+\State $\mathbf{Q} \leftarrow \text{Round}(\mathbf{W}_{\text{final}} / \Delta)$ \Comment{Convert to INT4/INT3}
+\State Save $\mathbf{Q}$ and quantization params $\Delta$
+
+\State \Return Quantized Model
+\end{algorithmic}
+\end{algorithm}
+
+\subsection*{Understanding AWQ: The "Magic" Explained}
+
+Standard quantization treats all weights equally, attempting to minimize the error between the original weight $w$ and its quantized version $\hat{w}$. AWQ argues that this is wrong. A weight error is only damaging if that weight interacts with a \textit{large input value}.
+
+\subsubsection*{1. What is a "Channel"?}
+In the context of Linear Layers (Matrix Multiplication $Y = XW^T$), a "channel" refers to an \textbf{Input Feature Dimension}.
+
+Imagine the input vector $X$ represents a specific token (e.g., the word "Apple") with 4096 features.
+\begin{itemize}
+    \item $X = [x_1, x_2, \ldots, x_{4096}]$
+    \item The weight matrix $W$ has 4096 columns, where the $i$-th column processes feature $x_i$.
+\end{itemize}
+We call that $i$-th column an \textbf{Input Channel}. If feature $x_{100}$ consistently has huge values (e.g., $50.0$ while others are $0.1$), then the weights in the 100th column of $W$ are extremely "salient" (important). Even a tiny quantization error in that column will be magnified by $50\times$ in the output.
+
+\subsubsection*{2. The Scaling Trick}
+This is the core "magic" of the algorithm. We cannot increase the precision of our integers (we are stuck with INT4). However, we can mathematically "protect" important weights by making them larger before quantization.
+
+The math relies on the commutative property of multiplication:
+\begin{equation}
+y = w \cdot x = (w \cdot s) \cdot (x / s)
+\end{equation}
+If we identify a salient channel (large $x$), we apply a scaling factor $s > 1$:
+\begin{enumerate}
+    \item \textbf{Scale Up Weight:} $w' = w \cdot s$. This spreads the weights out, utilizing more of the quantization grid.
+    \item \textbf{Scale Down Input:} $x' = x / s$. This shrinks the huge activation, preventing numerical instability.
+\end{enumerate}
+By scaling the weight \textit{up}, we effectively increase the "signal-to-noise" ratio for that specific channel during the quantization rounding step.
+
+\subsubsection*{3. The Calibration Dataset}
+You might ask: \textit{"How do we know which channels have large values?"}
+We cannot know this from the weights alone. We must run real data through the model.
+\begin{itemize}
+    \item \textbf{Role:} The dataset $\mathcal{D}_{\text{calib}}$ serves as a representative sample of "real life." It acts as a profiler to measure $\mathbf{x}_{\text{mag}}$.
+    \item \textbf{Impact of Selection:} The calibration set must match the target domain.
+    \begin{itemize}
+        \item If you calibrate on English Wikipedia, the model learns which features are salient for English grammar.
+        \item If you then test on Python Code, the distribution of $X$ changes. Features that were quiet in English might be loud in Python. If AWQ didn't protect those "Code-salient" weights, performance degrades.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection*{4. The Speedup Trick}
+If we scaled $x$ by $1/s$ during inference, we would need to perform an extra division operation for every token, slowing down the model.
+
+AWQ avoids this via \textbf{Fusion}. In a Transformer, every Linear layer is usually preceded by a LayerNorm (or RMSNorm).
+\begin{equation}
+\text{Linear}(\text{LayerNorm}(x))
+\end{equation}
+We can permanently fuse the scaling factor $1/s$ into the weights of the LayerNorm.
+\begin{itemize}
+    \item We modify the LayerNorm to output $x/s$ automatically.
+    \item The Linear layer then receives the scaled input without needing any extra math operations.
+\end{itemize}
+This results in a quantized model that runs just as fast as a standard one, but with significantly higher accuracy.
+
 
 \section{Continuous Batching}
 
