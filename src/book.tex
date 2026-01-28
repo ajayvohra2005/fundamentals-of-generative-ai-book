@@ -1,6 +1,7 @@
 \documentclass{book}
 \usepackage[utf8]{inputenc}
 \usepackage{amsmath}
+\usepackage{amsthm}
 \usepackage{amsfonts}
 \usepackage{amssymb}
 \usepackage{geometry}
@@ -13,6 +14,8 @@
 \usepackage{enumitem} % For cleaner list formatting
 \usepackage{algorithm}
 \usepackage{algpseudocode}
+
+\newtheorem{theorem}{Theorem}
 
 % Geometry settings for better margins
 \geometry{a4paper, margin=1in}
@@ -309,7 +312,7 @@ In image generation models, vectors can represent latent codes—compressed repr
 
 The dimension of a vector determines its expressiveness. Higher dimensions allow more nuanced representations but require more computation. Modern language models use embedding dimensions ranging from hundreds to thousands, balancing expressiveness with efficiency.
 
-\subsection{Vector Norm: Measuring Magnitude}
+\subsection{Vector Norm: Measuring Magnitude} \label{subsec:vector_norm}
 
 The norm (or magnitude) of a vector quantifies its length—how far the vector reaches from the origin in its space. For a $d$-dimensional vector $\mathbf{x}$, the Euclidean norm (also called the L2 norm) is defined as:
 
@@ -6926,6 +6929,777 @@ where $\alpha \in [0.1, 0.5]$ penalizes length. Tune $\alpha$ based on target le
 
 Reinforcement Learning from Human Feedback represents a fundamental advance in AI alignment---enabling us to train models on complex, subjective objectives that resist formal specification. By learning reward functions from comparative human preferences, RLHF has made modern language models dramatically more helpful, harmless, and honest.
 
+\chapter{Flow Models Theory}
+
+\section{Introduction}
+
+\subsection{The Generative Flow Paradigm}
+Modern generative AI systems have achieved remarkable success in creating photorealistic images, coherent videos, and complex molecular structures. Behind these achievements lies a fundamental mathematical framework: flow models. These models approach generation as a geometric problem of probability transport—smoothly transforming simple noise distributions into complex data distributions through continuous deformations of space.
+
+The core insight of flow models is elegant. Rather than treating generation as a discrete sampling problem or a stochastic diffusion process, we view it as deterministic fluid flow. Imagine a mist of probability mass spread uniformly across a vast space. Through carefully designed vector fields, we can shepherd this mist to concentrate into precise patterns—the structured outputs we wish to generate. A shapeless cloud of noise becomes a crisp image, a random scatter of points becomes a coherent video frame, a uniform distribution becomes the intricate manifold of natural data.
+
+\subsection{Chapter Overview}
+This chapter establishes the theoretical foundations of flow models, building from geometric intuition to rigorous mathematical formalism. We explicitly note that we will cover significant mathematical ground here. While the concepts of vector fields, probability density, and differential equations may seem daunting or unfamiliar in the context of machine learning, they are not recent inventions.
+
+The mathematics we develop here is rooted in the \textbf{Continuity Equation}, a fundamental principle of physics first formulated by Leonhard Euler in the mid-18th century. For nearly 300 years, this equation has served as the bedrock for describing how quantities are conserved as they move—whether it is mass in fluid dynamics, electric charge in electromagnetism, or probability amplitude in quantum mechanics. In this chapter, we simply apply these centuries-old tools to a new medium: the transport of probability density in high-dimensional data spaces.
+
+We encourage the reader to persist through the math, perhaps skimming it on first-read, but coming back to it later. While the theory involves calculus and differential equations, the practical algorithms that fall out of it are surprisingly simple—often reducing to just a few lines of code for minimizing a mean squared error. Yet, these simple algorithms, grounded in rigorous math, are what enable modern systems to generate photorealistic images, coherent videos, and novel molecular structures. The investment in understanding this theory pays dividends in understanding why these models work so effectively.
+
+\section{The Geometry of Generative Modeling}
+
+\subsection{High-Dimensional Data Spaces}
+Before diving into the mathematics of flow models, we must first understand the geometry of high-dimensional data spaces. When we think about an image—a photograph, a painting, a frame of video—we typically envision a two-dimensional grid of colored pixels. This pixel-grid view is useful for display and storage, but it obscures the deeper geometric structure that makes generative modeling possible.
+
+Consider a standard color 4K image with a resolution of $3840 \times 2160$ pixels. Each pixel contains three color channels (red, green, and blue), each represented by an 8-bit integer value between 0 and 255 (which we typically normalize to continuous real values between 0 and 1). If we flatten this image into a single vector, we obtain a point in a space with dimension:
+\[
+d = 3840 \times 2160 \times 3 = 24,883,200
+\]
+Mathematically, the image is a single point in $\mathbb{R}^{24,883,200}$, a space with nearly 25 million dimensions. Even a standard color high-definition image with a resolution of $1024 \times 1024$ pixels is a point in $\mathbb{R}^{3,145,728}$, a space with nearly 3 million dimensions. Other data spaces such as videos have even higher dimensions. Flow models operate in these very high-dimensional data spaces, so next, we look a little more closely at the topology of these data spaces.
+
+
+\subsection{The Data Manifold Hypothesis}
+
+The Data Manifold hypothesis posits that valid data does not exist randomly in the data space. For example, in the case of images with $d$ pixels, the data space $\mathbb{R}^d$  contains all possible images with $d$ pixels. Most points in this image data space correspond to meaningless static—random noise where pixel values have no relationship to their neighbors. But buried within this vast data space lies a tiny, intricate subset: the \textbf{Data Manifold}. 
+
+To understand the relationship between the data space of all possible pixel combinations and the Data Manifold of valid images, we need to dive deeper into the topological structure of the data.
+
+\subsubsection{Topological Structure of Data}
+
+First, we need to define a notion of distance. We assume the standard Euclidean distance metric, denoted as $\| \mathbf{x} - \mathbf{y} \|$, which measures the distance between two points (images) $\mathbf{x}$ and $\mathbf{y}$. This metric is just the generalization of distance between two points from the familiar 3-D space $\mathbb{R}^3$ to $\mathbb{R}^d$ (see \ref {subsec:vector_norm}). Using this distance metric, we define the fundamental building block of topology: the Open Ball.
+
+\textbf{Definition 1 (Open Ball in Ambient Space):}
+For any point $\mathbf{x} \in \mathbb{R}^d$ and any radius $\epsilon > 0$, the open ball $B_\epsilon(\mathbf{x})$ is the set of all points strictly within distance $\epsilon$ of $\mathbf{x}$:
+\[
+B_\epsilon(\mathbf{x}) = \{ \mathbf{y} \in \mathbb{R}^d \mid \| \mathbf{x} - \mathbf{y} \| < \epsilon \}
+\]
+In the context of images, $B_\epsilon(\mathbf{x})$ represents the set of all possible pixel perturbations of image $\mathbf{x}$ (such as adding random static noise) that keep the result ``close'' to the original.
+
+\textbf{Definition 2 (The Data Manifold):}
+We define the \textbf{Data Manifold} $\mathcal{M}$ as a strict subset of the ambient space:
+\[
+\mathcal{M} \subset \mathbb{R}^d
+\]
+This subset contains all valid samples (e.g., all valid images). 
+
+The core of the hypothesis lies in how we define a \textbf{Neighborhood} on this manifold. A simple Open Ball $B_\epsilon(\mathbf{x})$ in the ambient space is not enough, as it mostly contains invalid noise. We must define proximity \textit{restricted} to the valid data.
+
+\textbf{Definition 3 (Manifold Neighborhood / Open Subset):}
+A subset $V \subset \mathcal{M}$ is called an \textbf{open subset} of the manifold (or a neighborhood relative to $\mathcal{M}$) if it can be formed by the intersection of an ambient Open Ball with the manifold itself.
+
+Mathematically, for a point $\mathbf{x} \in \mathcal{M}$, a manifold neighborhood $V$ exists if there is some $\epsilon > 0$ such that:
+\[
+V = B_\epsilon(\mathbf{x}) \cap \mathcal{M}
+\]
+This concept is illustrated in Figure \ref{fig:manifold_topology}.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\textwidth]{images/data-manifold.png}
+    \caption{Visualization of the Data Manifold Hypothesis. The vast ambient space $\mathbb{R}^d$ contains mostly invalid noise. Valid data concentrates on a thin manifold $\mathcal{M}$. An open ball $B_\epsilon(\mathbf{x})$ in the ambient space contains mostly invalid points, but its intersection with the manifold defines a local neighborhood $V$ of valid, meaningful variations around the point $\mathbf{x}$.}
+    \label{fig:manifold_topology}
+\end{figure}
+
+In plain English: If you take a valid image $\mathbf{x}$ and add a small amount of random noise, you land in $B_\epsilon(\mathbf{x})$, which is mostly garbage. However, if you restrict yourself only to the points that remain on the manifold ($B_\epsilon(\mathbf{x}) \cap \mathcal{M}$), you find the meaningful variations of that image (e.g., slightly rotating the dog's head or changing the lighting).
+
+\subsubsection{Probabilistic Implications}
+The goal of generative modeling is to define a probability distribution $p_{\text{data}}$ that respects this topology. The distribution is supported strictly on the manifold:
+\[
+\text{supp}(p_{\text{data}}) = \mathcal{M}
+\]
+A generative flow model learns a transformation that pushes most of the probability mass from the space $\mathbb{R}^d$ onto the small structured subset $\mathcal{M}$. We formalize the notion of this transformation next.
+
+\subsection{The Pushforward Transformation}
+The generative modeling problem can now be stated precisely: we wish to learn a procedure that samples from $p_{\text{data}}$. Flow models approach this through probability transport. We begin with a distribution we understand completely: a simple, analytically tractable distribution $p_{\text{init}}$ such as a standard Gaussian that can be easily sampled. Visualized in high-dimensional space, $p_{\text{init}}$ forms a single, connected spherical cloud of probability mass centered at the origin. Our goal is to construct a transformation that pushes forward this simple initial distribution to match the complex data distribution. Mathematically, we seek a map $T: \mathbb{R}^d \to \mathbb{R}^d$ such that if $x_0 \sim p_{\text{init}}$, then $x_1 = T(x_0)$ has distribution $p_{\text{data}}$.
+
+At this point, you may be wondering: why not simply learn $T$ directly via a neural network? The answer lies in \textbf{topology}. Standard neural networks learn continuous functions. Geometrically, a continuous function can stretch, twist, or compress space, but it cannot \textbf{tear} it. This creates a fundamental conflict:
+\begin{itemize}
+    \item \textbf{The Input ($p_{init}$):} A Gaussian distribution is topologically simple—a single connected blob.
+    \item \textbf{The Output ($p_{data}$):} Real data is often disconnected. The "manifold of dogs" and the "manifold of airplanes" are likely separate islands in high-dimensional space, separated by vast regions of low probability.
+\end{itemize}
+
+\textbf{Analogy: The Rubber Sheet} \\
+Imagine the initial distribution $p_{init}$ is a single, pristine sheet of rubber (Figure \ref{fig:topology_rubber_sheet}). Your goal is to map this sheet onto a target shape consisting of two separate islands.
+\begin{itemize}
+    \item \textbf{Single-Step Discontinuity:} To form two islands, you would ideally \textit{cut} the rubber sheet in half. But a continuous neural network is not allowed to cut; it holds the "scissors" but is forbidden from using them.
+    \item \textbf{The Artifact Problem:} To approximate the separation, the network must stretch the rubber infinitesimally thin, creating a taut "band" connecting the two islands. In generative imaging, these bands manifest as artifacts—strange, unrealistic hybrids that look like half-dog, half-airplane—residing in the low-density regions between modes.
+\end{itemize}
+
+Flow models resolve this not by tearing the space, but by allowing the deformation to unfold over time $t \in [0, 1]$. By breaking the massive geometric distortion into an infinite sequence of infinitesimal nudges (a velocity field), the model can smoothly "massage" the probability mass into highly complex effectively disconnected manifolds in $p_{data}$ that are still interconnected via infinitesimally thin rubber bands. One big advantage of this smooth transformation is that it is invertible: If the multiple effectively disconnected manifolds in $p_{data}$ are still connected via infinitesimally thin rubber bands, we can get back to the original rubber sheet, $p_{init}$, by smoothly letting go the stretched rubber sheet. Because the transformation is invertible, this means we can move in either direction: from $p_{init}$ toward $p_{data}$, and vice-versa. This invertibility, formally known as \textbf{diffeomorphism}, is a key requirement in the mathematical formulation of flow models.
+
+Of course, in case of real $p_{data}$, we don't just have two islands: We have possibly thousands, or millions of islands interconnected with vanishingly thin strands (Figure \ref{fig:manifold_topology}). Learning such intricate probability distribution transformations is the key challenge of training flow models, and we need some heavy-duty mathematical theory to help us overcome this challenge. But we will tackle this math gently, step-by-step, so let us grasp some fundamental concepts, next.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{images/rubber-sheet-analogy.png}
+    \caption{ The Rubber Sheet Analogy. (A) Initial state. (B) A single-step model cannot 'cut' to form islands, creating artifact-filled rubber bands. (C) A flow model smoothly stretches the sheet over time into effectively disconnected manifolds connected by infinitesimally thin, invertible rubber bands.}
+    \label{fig:topology_rubber_sheet}
+\end{figure}
+
+\subsection{Probability Density vs. Probability Mass}
+Before proceeding further, we must understand the distinction between probability density and probability mass. In continuous spaces like $\mathbb{R}^d$, the probability of sampling exactly a specific data point $x$ is counter-intuitively exactly \textit{zero}. Wait, what? Yes, this is true, and the reason is very simple. In continuous space $\mathbb{R}^d$, there are infinitely many data points, and if the probability mass assigned to each of the data points was some non-zero value, no matter how small, summing up their probability mass would give us infinity, whereas, we know that the probability mass of a given space must always sum up to $1$. To get around this challenge, we use two distinct concepts:
+
+\begin{itemize}
+    \item \textbf{Probability Density $p(x)$:} Represents density—probability per unit volume. It tells us how concentrated probability is near $x$.
+    \item \textbf{Probability Mass:} To get actual probability, we must multiply density by volume. For a small region $R$ around $x$, $P(R) \approx p(x) \cdot \text{Volume}(R)$. So,  while probability mass assigned to $x$ is always zero, probability mass within a volume $R$ around $x$ maybe non-zero.
+\end{itemize}
+
+In high dimensions, volumes are counterintuitively small. A hypercube with side length $0.1$ in 3 million dimensions has a volume of effectively zero ($0.1^{3,000,000}$). If probability mass flows into the small region $R$ around $x$, the probability density $p(x)$ rises, increasing the probability of sampling a data point around $x$. Conversely, if mass flows out, $p(x)$ falls. 
+
+\subsection{Defining the Fields}
+Flow models are concerned with the flow of probability mass. To understand the math underlying this flow, we need to define two fundamental mathematical formulations:
+
+\textbf{1. The Probability Density Field $p_t(x)$:}
+A scalar field $p_t: \mathbb{R}^d \times [0, 1] \to \mathbb{R}_{\geq 0}$. The scalar $p_t(x)$ represents how concentrated probability mass is near location $x \in \mathbb{R}^d$ at time $t \in [0,1]$. 
+
+\textbf{2. The Velocity Vector Field $u_t(x)$:}
+A vector field $u_t: \mathbb{R}^d \times [0, 1] \to \mathbb{R}^d$. The vector $u_t(x)$ points in the direction probability mass would move if it were located at position $x \in \mathbb{R}^d$ at time $t \in [0,1]$.
+
+\subsection{Eulerian vs. Lagrangian View}
+Having defined the density and velocity fields, we now establish the mathematical framework for tracking how probability mass moves through  $\mathbb{R}^d$ space. In fluid dynamics, there are two distinct ways to observe this motion, distinguished by how they treat the control volume containing the mass:
+
+\begin{itemize}
+    \item \textbf{The Eulerian View (The Fixed Volume):}
+    In this perspective, we stand still and observe a specific, fixed point $x$ in $\mathbb{R}^d$ space. Imagine a tiny, fixed hyperspherical volume centered at $x$. We watch probability mass flow \textit{through} this fixed volume.
+    If the velocity field $u_t(x)$ directs more mass into the hypersphere than flows out, the density $p_t(x)$ inside the hypersphere increases. If more flows out, the density decreases. This view focuses on the rate of change of probability density at a fixed point $x$ in $\mathbb{R}^d$ space.
+
+    \item \textbf{The Lagrangian View (The Moving Volume):}
+    In this perspective, we attach ourselves to a specific hyperspherical "blob" of probability mass and ride along with it as it flows through the $\mathbb{R}^d$ space. Imagine the blob is located at some point $x_0$ at time $t=0$. As time $t$ evolves from $t=0$ toward $t=1$, we do not stay at the point $x_0$; we move with the flow, guided by the vector field $u_t(x)$.
+
+    
+    Crucially, the blob we are attached to does not remain a hypersphere. As it moves through the complex velocity field $u_t(x)$, the blob deforms—stretching and compressing into new shapes—as it bumps into other moving blobs of probability mass. The total amount of probability mass inside the blob remains constant throughout the journey. However, the probability density $p_t(x)$ at a point $x$ inside the blob at time $t$ rises as the blob volume compresses, and falls as the blob volume expands.
+\end{itemize}
+
+For reasons that will become clear later, for training flow models, we prefer the Eulerian perspective, and for inference, we prefer the Lagrangian perspective. However, it is important to keep in mind that the two perspectives are describing the same phenomena.
+
+\section{The Eulerian Perspective}
+
+\subsection{The Cosmic Nebula}
+
+To intuitively understand the Eulerian perspective and prepare for the upcoming mathematical formulations, consider the following analogy. Imagine our vector space $\mathbb{R}^d$ is a vast, static region of outer space (Figure \ref{fig:cosmic_nebula}).
+
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.7\textwidth]{images/cosmic-nebula.png}
+   \caption{The Cosmic Nebula Analogy for Flow Matching. (1) The initial state is a uniform, shapeless mist of probability mass ($p_{init}$). (2) The target state is a structured "galaxy" of dense data points ($p_{data}$), such as stars. (3) Instead of learning the complex global dynamics directly, we model the flow as the superposition of simple "gravitational pulls" toward individual stars (conditional vector fields). (4) The complex global vector field $u_t(x)$ naturally emerges from the sum of these simple conditional fields, successfully transporting the shapeless mist into the target galaxy structure.}
+    \label{fig:cosmic_nebula}
+\end{figure}
+
+
+\textbf{1. The Fluid (The Gas Cloud):}
+Initially, this region is filled with a thin, uniform mist of hydrogen gas ($p_{init}$). This represents our probability mass. It is shapeless and spread everywhere.
+
+\textbf{2. The Goal (The Galaxy):}
+We want this shapeless mist to collapse and concentrate into specific, dense pockets—stars and planets—that form a galaxy ($p_{data}$). Each star or planet in the galaxy  represents a valid data sample $z$ in our data distribution, similar to an image in a data distribution of images.
+
+\textbf{3. The Mechanism (The Gravity Field):}
+We cannot touch the gas directly to move it. We can only manipulate the gravitational forces in the region. At every point $x$ in space, we define a "pull" vector ($u_t$). The gas simply obeys this field and moves according to it.
+
+\textbf{Flux Superposition (The Key Insight):}
+How do we determine the complex gravitational field needed to form a whole galaxy from the uniform mist? Imagine that every future star or planet ($z$) exerts its own simple, independent pull.
+\begin{itemize}
+    \item Star A pulls gas toward itself.
+    \item Star B pulls gas toward itself.
+\end{itemize}
+At any point $x$ in the empty space, the total "flow" of gas is simply the weighted sum of the flows caused by Star A and Star B. If we want to train a "Gravitational Field" (our Neural Network), we don't need to teach it the complex global gravitational field of the galaxy. We simply teach it: "If you are here, and you want to form Star A, pull this way." By learning these simple, conditional pulls, the network implicitly learns the complex global field needed to sculpt the nebula. This insight—that the complex global field is just the superposition of simple conditional fields—is the key concept underlying all the math in this chapter. Now, let us boldly go into the mathematical formulations needed to understand flow models, starting with the Continuity Equation.
+
+\subsection{The Continuity Equation}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.7\textwidth]{images/continuity-equation.png}
+\caption{Visualizing the Continuity Equation. The equation links the change in density at a fixed point to the geometry of the flow. Left: When flux converges (negative divergence), mass accumulates, and density rises. Right: When flux diverges (positive divergence), mass vacates the region, and density falls. This mechanism conserves total probability mass.}
+\label{fig:continuity_eq_viz}
+\end{figure}
+
+The flow of probability mass at a point $x$ at time $t$ is governed by the Continuity Equation (Figure \ref{fig:continuity_eq_viz}), which ensures conservation of probability mass:
+
+\begin{equation} \label{eq:continuity}
+\frac{\partial p_t(x)}{\partial t} + \nabla \cdot (p_t(x) u_t(x)) = 0
+\end{equation}
+
+
+Let us unpack the terms:
+\begin{itemize}
+    \item $\frac{\partial p_t(x)}{\partial t}$: The rate of change of probability density at a fixed point $x$.
+    \item $p_t(x) u_t(x)$: The \textbf{flux}, representing the rate of probability mass flow. To understand why this product represents flow, consider the physical dimensions:
+\[
+\underbrace{p_t(x)}_{\frac{\text{Mass}}{\text{Volume}}} \times \underbrace{u_t(x)}_{\frac{\text{Distance}}{\text{Time}}} = \underbrace{\text{Flux}}_{\frac{\text{Mass}}{\text{Area} \cdot \text{Time}}}
+\]
+Intuitively, density tells us \textit{how crowded} the probability mass is, and velocity tells us \textit{how fast} it is moving. Multiplying them yields the amount of probability mass passing through a unit surface at $x$ per unit of time.
+    \item $\nabla \cdot (\dots)$: The \textbf{divergence} operator, measuring the net outflow of flux from a region.
+\end{itemize}
+
+The Continuity Equation (Figure \ref{fig:continuity_eq_viz}) states: \textit{The rate at which probability density increases at a point equals the negative of the net outflow of flux.} Mathematically, divergence is the sum of partial derivatives:
+\begin{equation}
+\nabla \cdot F(x) = \sum_{i=1}^d \frac{\partial F_i}{\partial x_i}
+\end{equation}
+
+If divergence is positive, probability mass is spreading out (leaving the region), causing probability density to drop. If divergence is negative, probability mass is converging (entering the region), causing the probability density to rise. This mechanism allows the velocity field to "sculpt" the probability density, transporting probability mass from the initial noise distribution to the target data distribution without ever creating or destroying probability.
+
+
+\section{Flow Matching: Learning to Transport Probability}
+
+With the continuity equation established, we now address the central question of flow-based generative modeling: how do we learn a velocity field that transports the initial distribution $p_{\text{init}}$ to the data distribution $p_{\text{data}}$? Flow matching provides an elegant answer.
+
+The key insight of flow matching is that we do not need to learn the complete, global velocity field (the complex gravitational field of the whole galaxy) directly. Instead, we decompose the problem into learning many simple, conditional velocity fields (the independent pull of a single star) and show that their superposition automatically yields the correct marginal (global) velocity field.
+
+\subsection{Probability Density Decomposition}
+
+We begin with the observation that the probability density distribution $p_t(x)$ can be written as an integral over conditional probability density distributions. To visualize this, we introduce the concept of \textbf{Probability Cones}.
+Let $z$ denote a specific sample (a target star, or an image) from the data distribution, so $z \sim p_{\text{data}}(z)$.
+Consider the conditional distribution $p_t(x|z)$. At $t=0$, this distribution is wide and diffuse (the uniform mist, or meaningless images with static). As $t \to 1$, this distribution must concentrate entirely onto the specific target $z$ (a star, or a valid image). Geometrically, we can visualize $p_t(x|z)$ as a \textit{cone of probability mass} in spacetime:
+\begin{itemize}
+    \item \textbf{The Base ($t=0$):} The cone is wide, representing the uncertainty of the initial noise state.
+    \item \textbf{The Tip ($t=1$):} The cone narrows to a sharp point exactly at $z$.
+\end{itemize}
+
+The marginal density $p_t(x)$ is simply the superposition (mixture) of all these overlapping cones. Mathematically:
+
+\begin{equation} \label{eq:marginal_density}
+p_t(x) = \int p_t(x|z) \, p_{\text{data}}(z) \, dz
+\end{equation}
+
+This decomposition is a standard marginalization: to get the total probability density at any point $x$ and time $t$, we sum the contributions from every "probability cone" passing through that point. If $x$ is located where many cones overlap, the marginal density $p_t(x)$ will be high. If $x$ is in a region traversed by few cones, the density will be low.
+
+\begin{figure}[h]
+    \centering
+        \includegraphics[width=0.7\textwidth]{images/prob-cone.png}
+    \caption{Visualizing Marginal Probability Density Decomposition. Each target data point $z$ defines a "cone" of conditional probability $p_t(x|z)$ that focuses mass from the noise distribution ($t=0$) to the target ($t=1$). The global marginal density $p_t(x)$ is the sum of these overlapping cones.}
+    \label{fig:probability_cones}
+\end{figure}
+
+\subsection{Deriving the Vector Field}
+
+The power of this decomposition becomes apparent when we consider velocity fields. For each conditional path $p_t(x|z)$, we assume there exists a corresponding conditional velocity field $u_t(x|z)$ that satisfies the continuity equation locally:
+
+\begin{equation} \label{eq:conditional_continuity}
+\frac{\partial p_t(x|z)}{\partial t} + \nabla \cdot (p_t(x|z) u_t(x|z)) = 0
+\end{equation}
+
+This equation states that for each fixed target $z$, the probability mass flowing toward $z$ evolves according to its own velocity field $u_t(x|z)$. The crucial question is: what velocity field governs the evolution of the marginal density $p_t(x)$?
+
+To answer this, we take the time derivative of the marginal density equation (\ref{eq:marginal_density}). Since $p_{\text{data}}(z)$ does not depend on time, we can bring the derivative inside the integral using the Leibniz integral rule:
+
+\begin{equation}
+\frac{\partial p_t(x)}{\partial t} = \frac{\partial}{\partial t} \int p_t(x|z) \, p_{\text{data}}(z) \, dz = \int \frac{\partial p_t(x|z)}{\partial t} \, p_{\text{data}}(z) \, dz
+\end{equation}
+
+Now we substitute the conditional continuity equation (\ref{eq:conditional_continuity}) for $\frac{\partial p_t(x|z)}{\partial t}$:
+
+\begin{equation}
+\frac{\partial p_t(x)}{\partial t} = \int \left( -\nabla \cdot (p_t(x|z) u_t(x|z)) \right) p_{\text{data}}(z) \, dz
+\end{equation}
+
+The divergence operator is linear, meaning $\nabla \cdot (aF + bG) = a(\nabla \cdot F) + b(\nabla \cdot G)$. This allows us to bring the divergence outside the integral:
+
+\begin{equation}
+\frac{\partial p_t(x)}{\partial t} = -\nabla \cdot \left( \int p_t(x|z) u_t(x|z) p_{\text{data}}(z) \, dz \right)
+\end{equation}
+
+Comparing this result with the marginal continuity equation \ref{eq:continuity}, we identify that the marginal flux must equal the integrated conditional flux. Dividing both sides by $p_t(x)$ yields the fundamental result of flow matching:
+
+\begin{equation} \label{eq:marginal_velocity}
+u_t(x) = \frac{1}{p_t(x)} \int u_t(x|z) \, p_t(x|z) \, p_{\text{data}}(z) \, dz
+\end{equation}
+
+Using Bayes' rule, we can rewrite this as a posterior expectation. The probability that a sample at $x$ belongs to a trajectory targeting $z$ is:
+
+\begin{equation}
+p_{\text{data}}(z|x, t) = \frac{p_t(x|z) p_{\text{data}}(z)}{p_t(x)}
+\end{equation}
+
+Thus:
+
+\begin{equation}
+u_t(x) = \mathbb{E}_{z \sim p_{\text{data}}(\cdot|x,t)} [u_t(x|z)]
+\end{equation}
+
+This interpretation connects to our nebula analogy: the global velocity at a point is the average of the specific pulls from all possible stars, weighted by the likelihood that the mass at that point is destined for each star.
+
+\subsection{The Flow Matching Objective}
+
+Equation (\ref{eq:marginal_velocity}) defines the target field $u_t(x)$, but computing it requires an intractable integral over the entire dataset. To train a neural network $v_\theta(x, t)$ to approximate this field, we ideally want to minimize the global error:
+
+\begin{equation} \label{eq:loss_fm_ideal}
+\mathcal{L}_{\text{FM}}(\theta) = \mathbb{E}_{t \sim \mathcal{U}(0,1)} \mathbb{E}_{x \sim p_t(x)} \left[ \| v_\theta(x, t) - u_t(x) \|^2 \right]
+\end{equation}
+
+Since $u_t(x)$ is intractable, we define a simpler objective called \textbf{Conditional Flow Matching} (CFM). Instead of matching the aggregated marginal field, we match the simple conditional fields individually:
+
+\begin{equation} \label{eq:loss_cfm}
+\mathcal{L}_{\text{CFM}}(\theta) = \mathbb{E}_{t \sim \mathcal{U}(0,1)} \mathbb{E}_{z \sim p_{\text{data}}} \mathbb{E}_{x \sim p_t(x|z)} \left[ \| v_\theta(x, t) - u_t(x|z) \|^2 \right]
+\end{equation}
+
+Crucially, all terms in $\mathcal{L}_{\text{CFM}}$ are tractable and easy to sample. We now prove that these two objectives are equivalent for optimization.
+
+\subsection{Theorem: Objective Equivalence}
+
+We now prove that minimizing the tractable conditional loss $\mathcal{L}_{\text{CFM}}$ is equivalent to minimizing the intractable marginal loss $\mathcal{L}_{\text{FM}}$.
+
+\begin{theorem}[Flow Matching Objective Equivalence]
+The gradients of the marginal flow matching objective $\mathcal{L}_{\text{FM}}(\theta)$ and the conditional flow matching objective $\mathcal{L}_{\text{CFM}}(\theta)$ with respect to the parameters $\theta$ are equal:
+\begin{equation}
+\nabla_\theta \mathcal{L}_{\text{FM}}(\theta) = \nabla_\theta \mathcal{L}_{\text{CFM}}(\theta)
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+We begin by writing the marginal objective $\mathcal{L}_{\text{FM}}$ in its explicit integral form, expanding the expectation over time and space:
+\begin{equation}
+\mathcal{L}_{\text{FM}}(\theta) = \int_0^1 \int_{\mathbb{R}^d} p_t(x) \| v_\theta(x, t) - u_t(x) \|^2 \, dx \, dt
+\end{equation}
+
+\textbf{Step 1: Expand the Marginal Loss} \\
+We expand the squared norm $\|a - b\|^2 = \|a\|^2 - 2\langle a, b \rangle + \|b\|^2$, where $\langle a, b \rangle$ is the familiar dot product between $a$ and $b$:
+\begin{equation}
+\mathcal{L}_{\text{FM}}(\theta) = \int_0^1 \int_{\mathbb{R}^d} p_t(x) \left( \| v_\theta(x, t) \|^2 - 2 \langle v_\theta(x, t), u_t(x) \rangle + \| u_t(x) \|^2 \right) \, dx \, dt
+\end{equation}
+Since we are computing the gradient with respect to $\theta$, the term $\| u_t(x) \|^2$ is constant and vanishes. Thus:
+\begin{equation} \label{eq:grad_fm_start}
+\nabla_\theta \mathcal{L}_{\text{FM}}(\theta) = \nabla_\theta \int_0^1 \underbrace{\int_{\mathbb{R}^d} p_t(x) \| v_\theta(x, t) \|^2 \, dx}_{\text{Term 1}} - \nabla_\theta \int_0^1 \underbrace{2 \int_{\mathbb{R}^d} p_t(x) \langle v_\theta(x, t), u_t(x) \rangle \, dx}_{\text{Term 2}} \, dt
+\end{equation}
+
+\textbf{Step 2: Analyze the Cross-Term (Term 2)} \\
+We substitute the definition of the marginal vector field $u_t(x)$ from Eq. (\ref{eq:marginal_velocity}) into the inner integral of Term 2:
+\begin{equation}
+u_t(x) = \frac{1}{p_t(x)} \int p_t(x|z) p_{\text{data}}(z) u_t(x|z) \, dz
+\end{equation}
+The integral becomes:
+\begin{align}
+\int_{\mathbb{R}^d} p_t(x) \langle v_\theta(x, t), u_t(x) \rangle \, dx &= \int_{\mathbb{R}^d} p_t(x) \left\langle v_\theta(x, t), \frac{1}{p_t(x)} \int p_t(x|z) p_{\text{data}}(z) u_t(x|z) \, dz \right\rangle dx
+\end{align}
+The $p_t(x)$ terms cancel out. By the linearity of the inner product and Fubini's theorem (swapping the order of integration), we get:
+\begin{align}
+&= \int_{\mathbb{R}^d} \int \langle v_\theta(x, t), u_t(x|z) \rangle p_t(x|z) p_{\text{data}}(z) \, dz \, dx \\
+&= \int \int_{\mathbb{R}^d} p_t(x|z) p_{\text{data}}(z) \langle v_\theta(x, t), u_t(x|z) \rangle \, dx \, dz \label{eq:fm_term2_final}
+\end{align}
+
+\textbf{Step 3: Analyze the Squared Term (Term 1)} \\
+We use the marginalization identity $p_t(x) = \int p_t(x|z) p_{\text{data}}(z) \, dz$ to rewrite the first term:
+\begin{align}
+\int_{\mathbb{R}^d} p_t(x) \| v_\theta(x, t) \|^2 \, dx &= \int_{\mathbb{R}^d} \left( \int p_t(x|z) p_{\text{data}}(z) \, dz \right) \| v_\theta(x, t) \|^2 \, dx \\
+&= \int \int_{\mathbb{R}^d} p_t(x|z) p_{\text{data}}(z) \| v_\theta(x, t) \|^2 \, dx \, dz \label{eq:fm_term1_final}
+\end{align}
+
+\textbf{Step 4: Compare with Conditional Loss} \\
+Now, let us write the explicit integral form of the Conditional Flow Matching loss $\mathcal{L}_{\text{CFM}}$:
+\begin{align}
+\mathcal{L}_{\text{CFM}}(\theta) &= \int_0^1 \int \int_{\mathbb{R}^d} p_t(x|z) p_{\text{data}}(z) \| v_\theta(x, t) - u_t(x|z) \|^2 \, dx \, dz \, dt \\
+&= \int_0^1 \int \int_{\mathbb{R}^d} p_t(x|z) p_{\text{data}}(z) \left( \| v_\theta \|^2 - 2 \langle v_\theta, u_t(\cdot|z) \rangle + \| u_t(\cdot|z) \|^2 \right) dx \, dz \, dt
+\end{align}
+Comparing Eq. (\ref{eq:fm_term1_final}) and Eq. (\ref{eq:fm_term2_final}) with this expansion, we see that the terms dependent on $\theta$ are identical. Specifically:
+\begin{itemize}
+    \item The $\| v_\theta \|^2$ term in $\mathcal{L}_{\text{CFM}}$ integrates to exactly Term 1 of $\mathcal{L}_{\text{FM}}$.
+    \item The cross-term in $\mathcal{L}_{\text{CFM}}$ integrates to exactly Term 2 of $\mathcal{L}_{\text{FM}}$.
+\end{itemize}
+Since the remaining term $\| u_t(x|z) \|^2$ does not depend on $\theta$, the gradients are identical.
+\end{proof}
+
+\subsection{The Training Algorithm}
+
+The equivalence theorem allows us to implement a highly efficient training loop. We simply sample random data points, random times, and random points along the conditional paths, then optimize the network to match the conditional velocity. The beauty of this algorithm is its simplicity. Each step involves a trivial regression task: "given that I am here and want to go there, what is my velocity?" Yet, the aggregate result of this training is a network that solves the complex, global transport problem defined by the nebula analogy.
+
+\begin{algorithm}
+\caption{Conditional Flow Matching Training Loop}
+\label{alg:cfm_training}
+\begin{algorithmic}[1]
+\Require Training dataset $\mathcal{D}$ (samples from $p_{\text{data}}$)
+\Require Neural network $v_\theta(x, t)$
+\Require Conditional path sampler returning $x \sim p_t(x|z)$ and target $u_t(x|z)$
+\Require Learning rate $\eta$
+
+\While{not converged}
+    \State Sample batch of data points $z \sim \mathcal{D}$
+    \State Sample batch of times $t \sim \mathcal{U}(0, 1)$
+    \State Sample $x_0 \sim p_{\text{init}}$
+
+    \State \textbf{Compute Location and Target:}
+    \State $x \leftarrow \text{SampleLocation}(z, t, x_0)$ \Comment{e.g., $(1-t)x_0 + tz$}
+    \State $u \leftarrow \text{ComputeConditionalVelocity}(z, t, x)$ \Comment{e.g., $z - x_0$}
+
+    \State \textbf{Forward Pass:}
+    \State $\hat{v} \leftarrow v_\theta(x, t)$
+
+    \State \textbf{Optimization:}
+    \State $\mathcal{L} \leftarrow \| \hat{v} - u \|^2$ \Comment{Mean Squared Error}
+    \State $\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}$ \Comment{Gradient Descent Update}
+\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+
+\subsection{Conditional Flow Matching}
+
+In the Flow Matching framework, we define a time-dependent probability path $p_t$ that continuously transforms a source distribution $p_0$ (e.g., standard Gaussian noise) to a target distribution $p_1$ (e.g., data).
+
+We construct this path using a simple linear interpolation (displacement map). For a source sample $x_0 \sim p_0$ and a target data point $x_1 \sim p_1$, we define the intermediate state $x_t$ at time $t \in [0, 1]$ as:
+
+\begin{equation} \label{eq:fm_path}
+x_t = \psi_t(x_0, x_1) = (1 - t) x_0 + t x_1
+\end{equation}
+
+This parameterization ensures that at $t=0$, we have $x_0$ (noise), and at $t=1$, we reach $x_1$ (data). The trajectory is a straight line connecting the source and target.
+
+\subsubsection*{Deriving the Target Vector Field}
+The objective of Flow Matching is to learn a velocity field $v_t(x)$ that generates this path. The target velocity $u_t$ for a specific pair $(x_0, x_1)$ is simply the time derivative of the trajectory defined in Equation (\ref{eq:fm_path}).
+
+Differentiating $x_t$ with respect to time $t$:
+
+\begin{equation} \label{eq:time_derivative}
+\frac{dx_t}{dt} = \frac{d}{dt} \left[ (1 - t) x_0 + t x_1 \right]
+\end{equation}
+
+Since $x_0$ and $x_1$ are constant with respect to time for a given trajectory, the derivative simplifies to:
+
+\begin{equation}
+\frac{dx_t}{dt} = -x_0 + x_1
+\end{equation}
+
+Thus, the conditional vector field is constant in time:
+
+\begin{equation} \label{eq:fm_velocity}
+u_t(x|x_0, x_1) = x_1 - x_0
+\end{equation}
+
+\subsubsection*{Training Objective}
+The neural network $v_\theta(t, x)$ approximates this vector field. Since the model does not know which specific $x_0$ and $x_1$ generated the current point $x$, it learns the expected velocity conditioned on the current location. This is achieved by minimizing the Flow Matching loss:
+
+\begin{equation}
+\mathcal{L}_{FM}(\theta) = \mathbb{E}_{t \sim [0,1], x_0 \sim p_0, x_1 \sim p_1} \left[ \| v_\theta(t, x_t) - (x_1 - x_0) \|^2 \right]
+\end{equation}
+
+where $x_t$ is sampled according to Equation (\ref{eq:fm_path}).
+
+\subsection{From Independent Couplings to Optimal Transport}
+
+While the linear conditional path defined above ($x_t = (1-t)x_0 + t x_1$) provides a mathematically simple objective for Flow Matching, its efficiency depends heavily on how the source samples $x_0$ and target samples $x_1$ are paired.
+
+\subsubsection*{Advantages of the Linear Path}
+The primary advantage of this formulation is its simplicity and stability.
+\begin{itemize}
+    \item \textbf{Analytic Vector Fields:} The target velocity $u_t = x_1 - x_0$ is constant for each trajectory, requiring no complex ODE or SDE solvers during training.
+    \item \textbf{Straight Trajectories:} Straight paths are the shortest distance between two points, theoretically minimizing the integration error during sampling compared to curved diffusion paths.
+\end{itemize}
+
+\subsubsection*{The Problem of Arbitrary Couplings}
+However, the standard formulation assumes an \textit{independent coupling} between the source and target distributions. We sample $x_0 \sim p_0$ and $x_1 \sim p_1$ independently, meaning any noise sample can be paired with any data sample.
+
+This randomness leads to significant inefficiencies:
+\begin{itemize}
+    \item \textbf{Crossing Paths:} Since the pairing is random, trajectories frequently cross each other. For example, a noise sample in the top-left quadrant might be mapped to a data point in the bottom-right, while a nearby noise sample maps to the top-left.
+    \item \textbf{High-Variance Vector Fields:} The neural network $v_\theta(t, x)$ attempts to learn the marginal vector field, which is the expectation of all individual trajectories passing through $x$. When paths cross, the network receives conflicting gradient signals (e.g., one path says "go right," another says "go left"), forcing it to learn the average. This results in a more complex, harder-to-learn vector field.
+    \item \textbf{Wasted Kinetic Energy:} The total distance traveled by the probability mass is far higher than necessary. The system expends "energy" moving mass across the entire domain rather than mapping it to the nearest valid data point.
+\end{itemize}
+
+\subsubsection*{Motivation for Optimal Transport}
+To resolve these issues, we need to replace the random independent coupling with an \textit{optimal coupling}. Instead of sampling $x_0$ and $x_1$ independently, we seek a joint distribution $\pi(x_0, x_1)$ that minimizes the total transport cost:
+
+\begin{equation}
+\mathcal{C}(\pi) = \int \| x_1 - x_0 \|^2 d\pi(x_0, x_1)
+\end{equation}
+
+This is the Monge-Kantorovich Optimal Transport problem. By aligning $x_0$ and $x_1$ such that the total squared distance is minimized, we ensure that:
+1. Trajectories do not cross (cyclical monotonicity).
+2. The distance traveled is minimized.
+3. The resulting vector field is smoother and easier for the network to learn.
+
+This motivates the use of \textbf{Optimal Transport Conditional Flow Matching (OT-CFM)}, where the training pairs $(x_0, x_1)$ are pre-aligned to approximate the optimal transport map.
+
+\subsection{Optimal Transport: The Monge-Kantorovich Problem}
+
+Optimal transport addresses a fundamental question: given two probability distributions $\mu$ and $\nu$, what is the most efficient way to transform one into the other? Here "efficient" is measured by a cost function $c(x, y)$ that quantifies the cost of moving a unit of probability mass from location $x$ to location $y$.
+
+The classical formulation, known as the Monge problem, seeks a transport map $T: \mathbb{R}^d \to \mathbb{R}^d$ that pushes forward $\mu$ to $\nu$ while minimizing total cost:
+
+\begin{equation}
+\min_{T: T_\# \mu = \nu} \int c(x, T(x)) \, d\mu(x)
+\end{equation}
+
+Here $T_\# \mu = \nu$ denotes the pushforward condition: for any measurable set $A$, we have $\nu(A) = \mu(T^{-1}(A))$. The notation means that applying $T$ to samples from $\mu$ yields samples from $\nu$.
+
+The Monge problem \cite{monge1781memoire} is often too restrictive—deterministic transport maps may not exist for all pairs of distributions. The Kantorovich relaxation \cite{kantorovich1942translocation} generalizes this by allowing probabilistic transport plans. A transport plan $\pi \in \Pi(\mu, \nu)$ is a joint distribution over pairs $(x, y)$ with marginals $\mu$ and $\nu$:
+
+\begin{equation}
+\int \pi(x, y) \, dy = \mu(x), \quad \int \pi(x, y) \, dx = \nu(y)
+\end{equation}
+
+The Kantorovich problem minimizes expected cost over all valid plans:
+
+\begin{equation}
+\min_{\pi \in \Pi(\mu, \nu)} \int c(x, y) \, d\pi(x, y)
+\end{equation}
+
+For the squared Euclidean cost $c(x, y) = \frac{1}{2}\|x - y\|^2$, the optimal plan defines a distance between distributions called the Wasserstein-2 distance or earth mover's distance.
+
+Our interest in optimal transport stems from its connection to probability flows. Rather than viewing transport as an instantaneous relocation, we can frame it as a dynamical problem: find a time-dependent velocity field that moves mass from $\mu$ to $\nu$ while minimizing a notion of kinetic energy. This is the Benamou-Brenier formulation, which we now develop in detail.
+
+\subsection{The Benamou-Brenier Formulation}
+
+The Benamou-Brenier formulation \cite{benamou2000computational} recasts Optimal Transport from a static coupling problem into a dynamic fluid mechanics problem. Instead of simply asking "which point maps to which?", we ask: "how does the probability mass move over time to minimize cost?" We seek a time-dependent probability density $\rho_t(x)$ and a velocity field $v_t(x)$ for $t \in [0, 1]$ that satisfy the following conditions:
+\begin{itemize}
+    \item \textbf{Boundary Conditions:} $\rho_0 = p_{\text{init}}$ (Source) and $\rho_1 = p_{\text{data}}$ (Target).
+    \item \textbf{Mass Conservation:} The density evolves according to the continuity equation:
+    \begin{equation}
+    \frac{\partial \rho_t}{\partial t} + \nabla \cdot (\rho_t v_t) = 0
+    \end{equation}
+    \item \textbf{Cost Minimization:} The total kinetic energy of the flow is minimized.
+\end{itemize}
+
+The kinetic energy functional $\mathcal{E}$ measures the total "cost" of the transport:
+\begin{equation}
+\mathcal{E}[\rho, v] = \int_0^1 \int_{\mathbb{R}^d} \frac{1}{2} \rho_t(x) \|v_t(x)\|^2 \, dx \, dt
+\end{equation}
+Physically, the term $\frac{1}{2} \rho \|v\|^2$ represents the kinetic energy density at a specific point. We integrate this over all space and all time.
+
+\begin{theorem}[Benamou-Brenier]
+The squared Wasserstein-2 distance $W_2^2(\mu, \nu)$ is exactly the minimum kinetic energy required to transport $\mu$ to $\nu$ while satisfying the continuity equation.
+\end{theorem}
+
+\subsubsection{Deriving the Optimal Velocity Field}
+To determine the properties of the optimal velocity field, we employ the \textbf{Calculus of Variations}, a field of mathematical analysis that deals with maximizing or minimizing functionals (integrals).
+
+\paragraph{Primer: The Method of Lagrange Multipliers}
+To understand how we derive the optimal velocity field, we must first review the Method of Lagrange Multipliers.
+
+Suppose we want to find the minimum value of a cost function $f(x)$ subject to a constraint $g(x) = 0$. We cannot simply set the derivative of $f(x)$ to zero, because the unconstrained minimum might lie outside the valid region defined by $g(x)$.
+
+Geometrically, the optimal solution occurs where the "force" pushing us toward the minimum of $f$ is exactly balanced by the constraint $g$. We formalize this by introducing a new variable $\lambda$ (the Lagrange multiplier) and constructing a combined function called the \textbf{Lagrangian}:
+\begin{equation}
+\mathcal{L}(x, \lambda) = f(x) - \lambda \cdot g(x)
+\end{equation}
+By finding the stationary points where the derivative of $\mathcal{L}$ is zero, we simultaneously satisfy the constraint and minimize the cost.
+
+\paragraph{Extension to Fields (Calculus of Variations)}
+In our optimal transport problem, we apply this same logic, but at a higher level of abstraction:
+\begin{itemize}
+    \item Instead of optimizing a simple variable $x$, we are optimizing entire \textbf{functions} (fields) $\rho_t(x)$ and $v_t(x)$.
+    \item Instead of a single constraint equation $g(x)=0$, we have a differential equation (the continuity equation) that must hold \textit{at every single point in space and time}.
+\end{itemize}
+
+Because the constraint applies everywhere, our Lagrange multiplier cannot be a single number $\lambda$. It must be a \textbf{function} $\phi(x, t)$—a scalar field defined over all space and time. You can think of this field $\phi$ as a variable "pressure" that acts locally to enforce mass conservation at every coordinate.
+
+\textbf{Step 1: Construct the Lagrangian} \\
+We define the Lagrangian functional $\mathcal{L}$ by adding the constraint term to the energy objective. We multiply the constraint equation (which should equal zero) by our multiplier field $\phi_t(x)$ and integrate the result over the entire domain. This sums up the "penalties" for violating the constraint across all space and time:
+\begin{equation}
+\mathcal{L}[\rho, v, \phi] = \underbrace{\int_0^1 \int_{\mathbb{R}^d} \frac{1}{2} \rho_t \|v_t\|^2 \, dx \, dt}_{\text{Objective (Kinetic Energy)}} - \underbrace{\int_0^1 \int_{\mathbb{R}^d} \phi_t \left( \frac{\partial \rho_t}{\partial t} + \nabla \cdot (\rho_t v_t) \right) \, dx \, dt}_{\text{Constraint terms}}
+\end{equation}
+
+\textbf{Step 2: Integration by Parts (The Divergence Theorem)} \\
+We want to find the velocity field $v_t$ that minimizes $\mathcal{L}$. To do this, we need to take the functional derivative with respect to $v_t$. However, $v_t$ is currently "trapped" inside the divergence operator $\nabla \cdot (\rho_t v_t)$. To isolate it, we use \textbf{Integration by Parts} in high dimensions, which is a direct application of the \textbf{Divergence Theorem}.
+
+\textit{Theorem (Integration by Parts for Divergence):}
+For a scalar field $\phi$ and a vector field $F$, the product rule for divergence states: $\nabla \cdot (\phi F) = \phi (\nabla \cdot F) + F \cdot \nabla \phi$. Integrating this over a volume $V$ gives:
+\begin{equation}
+\int_V \phi (\nabla \cdot F) \, dx = \int_V \nabla \cdot (\phi F) \, dx - \int_V F \cdot \nabla \phi \, dx
+\end{equation}
+By the Divergence Theorem, the first term on the right becomes a surface integral over the boundary $\partial V$:
+\begin{equation}
+\int_V \nabla \cdot (\phi F) \, dx = \oint_{\partial V} (\phi F) \cdot n \, dS
+\end{equation}
+In our case, the domain is all of $\mathbb{R}^d$. We assume the density $\rho_t$ (and thus the flux $F = \rho_t v_t$) vanishes at infinity. Therefore, the boundary surface integral is zero. This leaves us with the fundamental identity:
+\begin{equation} \label{eq:ibp_identity}
+\int_{\mathbb{R}^d} \phi_t (\nabla \cdot (\rho_t v_t)) \, dx = - \int_{\mathbb{R}^d} (\rho_t v_t) \cdot \nabla \phi_t \, dx
+\end{equation}
+
+Substituting (\ref{eq:ibp_identity}) back into our Lagrangian, we effectively "move" the derivative operator $\nabla$ from the velocity $v_t$ onto the potential $\phi_t$. The relevant part of the Lagrangian depending on $v_t$ becomes:
+\begin{equation}
+\mathcal{L}_{\text{part}} = \int_0^1 \int_{\mathbb{R}^d} \left( \frac{1}{2} \rho_t \|v_t\|^2 + \rho_t v_t \cdot \nabla \phi_t \right) dx \, dt
+\end{equation}
+Note the sign change: the minus sign from the original Lagrangian cancels with the minus sign from the integration by parts, resulting in a positive term.
+
+\textbf{Step 3: Taking the Variation} \\
+Now that $v_t$ is algebraically exposed (no longer inside a differential operator), we can take the variation. We treat the integrand as a function $F(v) = \frac{1}{2}\rho \|v\|^2 + \rho v \cdot \nabla \phi$ and compute the gradient with respect to $v$:
+\begin{itemize}
+    \item The derivative of $\frac{1}{2} \rho \|v\|^2$ is $\rho v$.
+    \item The derivative of $\rho v \cdot \nabla \phi$ (which is linear in $v$) is $\rho \nabla \phi$.
+\end{itemize}
+Setting the variation to zero to find the stationary point:
+\begin{equation}
+\frac{\delta \mathcal{L}}{\delta v_t} = \rho_t v_t + \rho_t \nabla \phi_t = 0
+\end{equation}
+
+\textbf{Step 4: The Result} \\
+Factoring out the density $\rho_t(x)$ (and assuming $\rho_t(x) > 0$ along the path where mass is present), we obtain the defining condition of optimal transport:
+\begin{equation}
+v_t(x) = -\nabla \phi_t(x)
+\end{equation}
+This proves that the optimal velocity field is a \textbf{Gradient Field}. It is irrotational ($\nabla \times v = 0$) and determined entirely by the scalar potential function $\phi_t$.
+
+\subsubsection{Implications: The Geometry of Transport}
+The result $v_t = -\nabla \phi_t$ is physically profound. It implies that \textbf{Optimal Transport is Irrotational}.
+\begin{itemize}
+    \item The optimal velocity field has zero curl ($\nabla \times v = 0$). There are no swirls or eddies in an optimal flow; mass moves directly toward its destination.
+    \item The particles follow the "gradient descent" of the potential field $\phi_t$.
+\end{itemize}
+
+This result tells us that the optimal velocity field is not arbitrary; it is the gradient of a scalar potential. This corresponds to the concept of geodesics (shortest paths) in the Wasserstein space. In Euclidean space, minimizing kinetic energy (constant velocity) results in straight lines.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{images/optimal-transport.png}
+\caption{Comparison of Gaussian linear interpolation paths (left) versus optimal transport paths (right). Gaussian paths follow straight lines regardless of the density landscape, potentially crossing low-probability regions. Optimal transport paths minimize kinetic energy, bending to follow high-density geodesics through the data manifold.}
+\label{fig:path_comparison}
+\end{figure}
+
+
+\subsubsection{The Bridge to Rectified Flows}
+We have established that optimal transport minimizes kinetic energy. A fundamental result in mechanics is that the path which minimizes kinetic energy for a free particle is a \textbf{straight line} traversed at \textbf{constant velocity}.
+
+If we could construct a flow where every particle moves in a perfectly straight line from its starting noise coordinate $x_0$ to its data coordinate $x_1$, we would achieve the lowest possible transport cost (minimal kinetic energy). The vector field for such a flow would be trivial: $v_t(x_t) = x_1 - x_0$.
+
+However, we do not know the pairing $(x_0, x_1)$ a priori. The standard Flow Matching objective we derived previously ensures the boundary conditions are met, but it results in curved, non-optimal paths.
+This raises a tantalizing question: \textit{Can we take a learned, curved flow and iteratively "straighten" it to approach the optimal transport solution?}
+
+This motivation leads directly to the concept of \textbf{Rectified Flows}, which we explore in the next section.
+
+\subsection{Rectified Flows}
+
+A recent innovation called rectified flow \cite{liu2023flow} provides a practical way to approximate optimal transport paths through iterative refinement. The key insight is that applying flow matching to an existing flow model produces a new model with straighter trajectories. By repeatedly applying this procedure, trajectories progressively straighten, approaching optimal transport paths.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{images/rectified-flow.png}
+\caption{Rectified flow progressively straightens trajectories through iterative retraining. Each iteration generates coupled samples $(x_0, x_1)$ from the current model, then trains a new model on straight-line interpolations between these pairs. After several iterations, trajectories approach optimal transport geodesics, enabling fast single-step inference.}
+\label{fig:rectified_flow}
+\end{figure}
+
+The rectification procedure works as follows. Suppose we have trained a flow model with velocity field $v_\theta$. We can use this model to generate pairs $(x_0, x_1)$ by sampling $x_0 \sim p_{\text{init}}$ and integrating the learned flow to obtain $x_1$. These pairs define a coupling between the initial and data distributions.
+
+We then train a new flow model using straight-line paths connecting each pair:
+\begin{equation}
+x_t = (1 - t) x_0 + t x_1
+\end{equation}
+
+The conditional velocity for this path is simply:
+\begin{equation}
+u_t(x|x_0, x_1) = x_1 - x_0
+\end{equation}
+
+Training a model to match these constant-velocity trajectories yields a new flow with straighter paths than the original. Iterating this process—train a model, generate pairs, retrain on straight lines connecting the pairs—progressively rectifies the flow.
+
+The theoretical justification comes from optimal transport theory. Each iteration reduces the expected kinetic energy of the flow, moving closer to the optimal transport solution. After sufficient iterations, the trajectories become nearly straight, allowing for extremely fast inference—often requiring only a single integration step rather than the typical tens of steps.
+
+Rectified flows bridge the gap between simple Gaussian paths and optimal transport. We can train an initial model using Gaussian paths (which are computationally cheap), then rectify it to obtain near-optimal transport with minimal additional cost. This strategy has proven effective in state-of-the-art image generation models.
+
+
+\section{The Lagrangian Connection: From Fields to Trajectories}
+
+Throughout this chapter, we have worked in the Eulerian frame—observing density and velocity fields at fixed locations in space. This perspective naturally leads to the flow matching training objective and provides the mathematical foundation for learning probability transport. However, when we wish to actually generate samples using a trained flow model, we must shift perspectives. Generation requires following individual trajectories through space, which is fundamentally a Lagrangian view. This section bridges the two perspectives, showing how the velocity fields we learn in the Eulerian frame give rise to the sample paths we integrate during inference.
+
+\subsection{The Ordinary Differential Equation}
+
+Given a learned velocity field $v_\theta(x, t)$, we can generate a sample by solving an initial value problem. We start with a random initial condition $x_0 \sim p_{\text{init}}$ and evolve it forward according to the ordinary differential equation (ODE):
+
+\begin{equation} \label{eq:flow_ode}
+\frac{dx_t}{dt} = v_\theta(x_t, t), \quad x_0 \sim p_{\text{init}}
+\end{equation}
+
+This ODE describes a deterministic trajectory through space. At each instant $t$, the position $x_t$ determines the velocity $v_\theta(x_t, t)$, which in turn determines how the position changes. Integrating from $t = 0$ to $t = 1$ produces a sample $x_1$ from the (approximately) data distribution.
+
+The connection between the Eulerian and Lagrangian views becomes clear when we consider the relationship between this ODE and the continuity equation. If we have a large ensemble of particles all following trajectories dictated by the same velocity field, the density of this ensemble evolves according to the continuity equation. Conversely, if we know the density evolution satisfies the continuity equation for velocity field $v_\theta$, then individual particles following the ODE will collectively maintain this density.
+
+This duality is precise and can be formalized through the pushforward of measures. If $x_0$ has distribution $p_0$ and evolves according to the ODE with velocity field $v_\theta$, then $x_t$ has distribution $p_t$, where $p_t$ satisfies:
+
+\begin{equation}
+\frac{\partial p_t}{\partial t} + \nabla \cdot (p_t v_\theta(\cdot, t)) = 0
+\end{equation}
+
+This is exactly the continuity equation with velocity field $v_\theta$. The Lagrangian trajectories (solving the ODE) and the Eulerian density evolution (solving the PDE) are two sides of the same coin.
+
+\subsection{Numerical Integration Methods}
+
+In practice, we cannot solve the ODE analytically. Instead, we use numerical integration methods that approximate the solution through discrete time steps. The simplest approach is the Euler method, which discretizes time into steps of size $\Delta t$ and uses the current velocity to step forward:
+
+\begin{equation}
+x_{t + \Delta t} = x_t + \Delta t \cdot v_\theta(x_t, t)
+\end{equation}
+
+Starting from $x_0$ and repeatedly applying this update for $N$ steps with $\Delta t = 1/N$ produces an approximate solution $x_1$. The Euler method is a \textbf{first-order method}: while the local error introduced at each step is $\mathcal{O}(\Delta t^2)$, these errors accumulate over the trajectory, resulting in a \textbf{global error} of $\mathcal{O}(\Delta t)$. This implies that to halve the final error, we must double the number of steps, which can be computationally expensive.
+
+More sophisticated methods offer better accuracy for the same computational cost. The second-order Runge-Kutta method (also called the midpoint method) evaluates the velocity at an intermediate point:
+
+\begin{equation}
+\begin{aligned}
+x_{t + \Delta t/2} &= x_t + \frac{\Delta t}{2} v_\theta(x_t, t) \\
+x_{t + \Delta t} &= x_t + \Delta t \cdot v_\theta(x_{t + \Delta t/2}, t + \Delta t/2)
+\end{aligned}
+\end{equation}
+
+This is a \textbf{second-order method} with a global error of $\mathcal{O}(\Delta t^2)$, providing significantly better accuracy than Euler for the same number of function evaluations (two per step instead of one, but much larger step sizes are possible). The fourth-order Runge-Kutta (RK4) method further improves accuracy by using four velocity evaluations per step:
+
+\begin{equation}
+\begin{aligned}
+k_1 &= v_\theta(x_t, t) \\
+k_2 &= v_\theta(x_t + \frac{\Delta t}{2} k_1, t + \frac{\Delta t}{2}) \\
+k_3 &= v_\theta(x_t + \frac{\Delta t}{2} k_2, t + \frac{\Delta t}{2}) \\
+k_4 &= v_\theta(x_t + \Delta t \cdot k_3, t + \Delta t) \\
+x_{t + \Delta t} &= x_t + \frac{\Delta t}{6}(k_1 + 2k_2 + 2k_3 + k_4)
+\end{aligned}
+\end{equation}
+
+RK4 is a \textbf{fourth-order method} with a global error of $\mathcal{O}(\Delta t^4)$. This high degree of accuracy makes it the standard choice for many applications. In practice, flow models often use between 10 and 100 integration steps, with higher-order methods like RK4 enabling fewer steps for the same quality.
+
+\subsection{The Inference Algorithm}
+
+With numerical integration methods in hand, we can now specify the complete inference procedure for generating samples from a trained flow model.
+
+\begin{algorithm}
+\caption{Flow Model Sampling}
+\label{alg:flow_sampling}
+\begin{algorithmic}[1]
+\Require Trained velocity network $v_\theta(x, t)$
+\Require Number of integration steps $N$
+\Require ODE solver (Euler, RK4, etc.)
+
+\State Sample initial noise: $x_0 \sim \mathcal{N}(0, I)$
+\State Set step size: $\Delta t = 1 / N$
+
+\For{$i = 0$ to $N - 1$}
+    \State $t = i \cdot \Delta t$
+    \State $x_{t + \Delta t} = \text{ODESolve}(x_t, t, \Delta t, v_\theta)$
+\EndFor
+
+\State \Return $x_1$ (generated sample)
+\end{algorithmic}
+\end{algorithm}
+
+The ODESolve function implements the chosen numerical integration method. For Euler, it simply computes $x_t + \Delta t \cdot v_\theta(x_t, t)$. For higher-order methods, it performs the multi-stage updates described above.
+
+One important consideration is that the velocity network $v_\theta$ must be evaluated many times during inference—once per step for Euler, or multiple times per step for methods like RK4. This makes network evaluation speed critical for fast generation.
+
+\subsection{Connecting Training and Inference}
+
+The beauty of the flow matching framework is that training and inference use the same underlying mathematical object—the velocity field—but view it from different perspectives. During training, we work in the Eulerian frame:
+
+\begin{itemize}
+\item Sample points $(t, z, x)$ from the time distribution, data distribution, and conditional path
+\item Evaluate the network $v_\theta(x, t)$ at these points
+\item Compare to the conditional velocity $u_t(x|z)$ and minimize squared error
+\item Update network parameters via backpropagation
+\end{itemize}
+
+During inference, we work in the Lagrangian frame:
+
+\begin{itemize}
+\item Sample initial condition $x_0$ from the noise distribution
+\item Follow the trajectory dictated by $v_\theta$ using ODE integration
+\item Each integration step evaluates $v_\theta(x_t, t)$ at the current position
+\item The final position $x_1$ is the generated sample
+\end{itemize}
+
+The Eulerian training learns a velocity field that satisfies the continuity equation, ensuring proper density transport. The Lagrangian inference integrates this field to produce samples. The mathematical consistency between these views—guaranteed by the flow matching theorem—ensures that the generated samples have the correct distribution (approximately $p_{\text{data}}$) despite never explicitly computing densities during inference.
+
+This connection also explains why flow models are efficient compared to diffusion models. Diffusion models require many steps because they slowly remove noise through a stochastic process. Flow models are deterministic and can use numerical integration methods to achieve accurate transport in fewer steps. Modern flow models with rectified paths can sometimes generate high-quality samples in a single integration step, making them orders of magnitude faster than diffusion-based alternatives. This is the key reason we are not covering diffusion based models in this book.
+
+\section{Conclusion}
+
+We have established the complete theoretical foundation for flow-based generative modeling. Beginning with the geometric view of high-dimensional data, we adopted the Eulerian perspective of probability as a fluid. The continuity equation provided the framework for describing density evolution, while the flow matching theorem demonstrated that complex global fields can be learned through simple conditional paths.
+
+Our exploration covered the spectrum of probability paths, from Gaussian interpolations to optimal transport geodesics. We utilized the Benamou-Brenier formulation to connect discrete optimal transport with continuous dynamics, offering a rigorous justification for learning optimal flows. Crucially, we reconciled the Eulerian and Lagrangian perspectives, showing how observing fixed-point field evolution during training enables the generation of individual trajectories during inference.
+
+This framework applies universally across data modalities, whether for images, video, or molecular structures. The core principle remains identical: probability transport through learned velocity fields. By grounding these models in the continuity equation and ODE integration, we ensure that the resulting algorithms are not only theoretically sound but capable of transforming shapeless noise into highly structured data.
+
 % --- References Section ---
 
 \begin{thebibliography}{9}
@@ -7045,6 +7819,17 @@ Schulman, J., Moritz, P., Levine, S., Jordan, M., \& Abbeel, P. (2016).
 High-dimensional continuous control using generalized advantage estimation.
 \textit{International Conference on Learning Representations}.
 
+\bibitem{monge1781memoire}
+G.~Monge, ``M{\'e}moire sur la th{\'e}orie des d{\'e}blais et des remblais,'' \textit{Histoire de l'Acad{\'e}mie Royale des Sciences}, pp.~666--704, 1781.
+
+\bibitem{kantorovich1942translocation}
+L.~V. Kantorovich, ``On the translocation of masses,'' \textit{Doklady Akademii Nauk SSSR}, vol.~37, no.~7--8, pp.~199--201, 1942.
+
+\bibitem{benamou2000computational}
+J.-D. Benamou and Y.~Brenier, ``A computational fluid mechanics solution to the Monge-Kantorovich mass transfer problem,'' \textit{Numerische Mathematik}, vol.~84, no.~3, pp.~375--393, 2000.
+
+\bibitem{liu2023flow}
+X.~Liu, C.~Gong, and Q.~Liu, ``Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow,'' in \textit{International Conference on Learning Representations (ICLR)}, 2023.
 
 \end{thebibliography}
 
