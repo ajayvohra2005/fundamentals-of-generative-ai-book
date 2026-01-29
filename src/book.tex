@@ -7286,7 +7286,7 @@ We use the marginalization identity $p_t(x) = \int p_t(x|z) p_{\text{data}}(z) \
 Now, let us write the explicit integral form of the Conditional Flow Matching loss $\mathcal{L}_{\text{CFM}}$:
 \begin{align}
 \mathcal{L}_{\text{CFM}}(\theta) &= \int_0^1 \int \int_{\mathbb{R}^d} p_t(x|z) p_{\text{data}}(z) \| v_\theta(x, t) - u_t(x|z) \|^2 \, dx \, dz \, dt \\
-&= \int_0^1 \int \int_{\mathbb{R}^d} p_t(x|z) p_{\text{data}}(z) \left( \| v_\theta \|^2 - 2 \langle v_\theta, u_t(\cdot|z) \rangle + \| u_t(\cdot|z) \|^2 \right) dx \, dz \, dt
+&= \int_0^1 \int \int_{\mathbb{R}^d} p_t(x|z) p_{\text{data}}(z) \left( \| v_\theta \|^2 - 2 \langle v_\theta, u_t(x|z) \rangle + \| u_t(x|z) \|^2 \right) dx \, dz \, dt
 \end{align}
 Comparing Eq. (\ref{eq:fm_term1_final}) and Eq. (\ref{eq:fm_term2_final}) with this expansion, we see that the terms dependent on $\theta$ are identical. Specifically:
 \begin{itemize}
@@ -7342,7 +7342,7 @@ x_t = \psi_t(x_0, x_1) = (1 - t) x_0 + t x_1
 This parameterization ensures that at $t=0$, we have $x_0$ (noise), and at $t=1$, we reach $x_1$ (data). The trajectory is a straight line connecting the source and target.
 
 \subsubsection*{Deriving the Target Vector Field}
-The objective of Flow Matching is to learn a velocity field $v_t(x)$ that generates this path. The target velocity $u_t$ for a specific pair $(x_0, x_1)$ is simply the time derivative of the trajectory defined in Equation (\ref{eq:fm_path}).
+The objective of Flow Matching is to learn a velocity field $u_t(x)$ that generates this path. The target velocity $u_t$ for a specific pair $(x_0, x_1)$ is simply the time derivative of the trajectory defined in Equation (\ref{eq:fm_path}).
 
 Differentiating $x_t$ with respect to time $t$:
 
@@ -7363,10 +7363,10 @@ u_t(x|x_0, x_1) = x_1 - x_0
 \end{equation}
 
 \subsubsection*{Training Objective}
-The neural network $v_\theta(t, x)$ approximates this vector field. Since the model does not know which specific $x_0$ and $x_1$ generated the current point $x$, it learns the expected velocity conditioned on the current location. This is achieved by minimizing the Flow Matching loss:
+The neural network $v_\theta(t, x)$ approximates this vector field. Since the model does not know which specific $x_0$ and $x_1$ generated the current point $x$, it learns the expected velocity conditioned on the current location. This is achieved by minimizing the Conditional Flow Matching loss:
 
 \begin{equation}
-\mathcal{L}_{FM}(\theta) = \mathbb{E}_{t \sim [0,1], x_0 \sim p_0, x_1 \sim p_1} \left[ \| v_\theta(t, x_t) - (x_1 - x_0) \|^2 \right]
+\mathcal{L}_{CFM}(\theta) = \mathbb{E}_{t \sim [0,1], x_0 \sim p_0, x_1 \sim p_1} \left[ \| v_\theta(t, x_t) - (x_1 - x_0) \|^2 \right]
 \end{equation}
 
 where $x_t$ is sampled according to Equation (\ref{eq:fm_path}).
@@ -7388,7 +7388,7 @@ However, the standard formulation assumes an \textit{independent coupling} betwe
 This randomness leads to significant inefficiencies:
 \begin{itemize}
     \item \textbf{Crossing Paths:} Since the pairing is random, trajectories frequently cross each other. For example, a noise sample in the top-left quadrant might be mapped to a data point in the bottom-right, while a nearby noise sample maps to the top-left.
-    \item \textbf{High-Variance Vector Fields:} The neural network $v_\theta(t, x)$ attempts to learn the marginal vector field, which is the expectation of all individual trajectories passing through $x$. When paths cross, the network receives conflicting gradient signals (e.g., one path says "go right," another says "go left"), forcing it to learn the average. This results in a more complex, harder-to-learn vector field.
+    \item \textbf{High-Variance Vector Fields:} The neural network $v_\theta(t, x)$ attempts to learn the marginal vector field. When paths cross at a point $x$, the network receives conflicting gradient signals (e.g., one path says "go right," another says "go left"). This forces the network to learn the average of these conflicts, resulting in a turbulent, harder-to-learn vector field.
     \item \textbf{Wasted Kinetic Energy:} The total distance traveled by the probability mass is far higher than necessary. The system expends "energy" moving mass across the entire domain rather than mapping it to the nearest valid data point.
 \end{itemize}
 
@@ -7399,94 +7399,203 @@ To resolve these issues, we need to replace the random independent coupling with
 \mathcal{C}(\pi) = \int \| x_1 - x_0 \|^2 d\pi(x_0, x_1)
 \end{equation}
 
-This is the Monge-Kantorovich Optimal Transport problem. By aligning $x_0$ and $x_1$ such that the total squared distance is minimized, we ensure that:
-1. Trajectories do not cross (cyclical monotonicity).
-2. The distance traveled is minimized.
-3. The resulting vector field is smoother and easier for the network to learn.
+This is the Monge-Kantorovich Optimal Transport problem. By aligning $x_0$ and $x_1$ such that the total squared distance is minimized, we ensure that trajectories are straight and, crucially, do not cross.
 
-This motivates the use of \textbf{Optimal Transport Conditional Flow Matching (OT-CFM)}, where the training pairs $(x_0, x_1)$ are pre-aligned to approximate the optimal transport map.
+
+
+\subsubsection*{Why Trajectories Do Not Cross: Cyclical Monotonicity}
+
+The non-crossing property is not merely an aesthetic preference; it is a fundamental geometric consequence of cost minimization. Consider the simplest case of two source points $x_a, x_b$ and two target points $y_a, y_b$.
+
+If we pair $(x_a \to y_b)$ and $(x_b \to y_a)$ such that their paths intersect, we can almost always reduce the total transport distance by swapping the targets to $(x_a \to y_a)$ and $(x_b \to y_b)$. This "uncrossing" operation reduces the global cost. Since Optimal Transport seeks the \textit{minimum} possible global cost, the resulting paths must be free of such crossings.
+
+Mathematically, this is formalized as \textbf{Cyclical Monotonicity}. A transport map $T$ is cyclically monotonic if, for any sequence of points $(x_1, y_1), \dots, (x_k, y_k)$ in the transport plan, permuting the targets cannot lower the cost:
+
+\begin{equation}
+\sum_{i=1}^k \| x_i - y_i \|^2 \leq \sum_{i=1}^k \| x_i - y_{i+1} \|^2
+\end{equation}
+
+where $y_{k+1} = y_1$.
 
 \subsection{Optimal Transport: The Monge-Kantorovich Problem}
 
-Optimal transport addresses a fundamental question: given two probability distributions $\mu$ and $\nu$, what is the most efficient way to transform one into the other? Here "efficient" is measured by a cost function $c(x, y)$ that quantifies the cost of moving a unit of probability mass from location $x$ to location $y$.
+Optimal transport addresses a fundamental question: given two probability distributions $\mu$ (the source) and $\nu$ (the target), what is the most efficient way to transform one into the other? Here, "efficient" is measured by a cost function $c(x, y)$ that quantifies the penalty or effort required to move a unit of probability mass from location $x$ to location $y$.
 
-The classical formulation, known as the Monge problem, seeks a transport map $T: \mathbb{R}^d \to \mathbb{R}^d$ that pushes forward $\mu$ to $\nu$ while minimizing total cost:
+\subsubsection{The Monge Formulation (Deterministic Transport)}
+The classical formulation, proposed by Gaspard Monge in 1781 \cite{monge1781memoire}, frames this as a deterministic mapping problem. We seek a transport map function $T: \mathbb{R}^d \to \mathbb{R}^d$ that moves every particle from the source probability distribution $\mu$ to a specific location in the target probability distribution $\nu$ such that the total transport cost is minimized.
 
+The objective function is:
 \begin{equation}
-\min_{T: T_\# \mu = \nu} \int c(x, T(x)) \, d\mu(x)
+\min_{T} \int c(x, T(x)) \, d\mu(x) \quad \text{subject to} \quad T_\# \mu = \nu
 \end{equation}
 
-Here $T_\# \mu = \nu$ denotes the pushforward condition: for any measurable set $A$, we have $\nu(A) = \mu(T^{-1}(A))$. The notation means that applying $T$ to samples from $\mu$ yields samples from $\nu$.
+\textbf{Understanding the Objective}:
+The integral represents the \textit{total global cost}. For every infinitesimal unit of probability mass located at $x$ in the source distribution, we pay a cost $c(x, T(x))$ to move it to its destination $T(x)$. By integrating over the entire source domain, we sum up the costs for moving all probability mass. The ``min'' operator seeks the specific function $T$ that yields the lowest possible sum.
 
-The Monge problem \cite{monge1781memoire} is often too restrictive—deterministic transport maps may not exist for all pairs of distributions. The Kantorovich relaxation \cite{kantorovich1942translocation} generalizes this by allowing probabilistic transport plans. A transport plan $\pi \in \Pi(\mu, \nu)$ is a joint distribution over pairs $(x, y)$ with marginals $\mu$ and $\nu$:
-
+\textbf{Understanding the Pushforward Constraint} ($T_\# \mu = \nu$):
+The notation $T_\# \mu = \nu$ is the formal constraint ensuring that the map $T$ actually reconstructs the target distribution. It is defined by the requirement that for any measurable region (set) $A$ in the target space:
 \begin{equation}
-\int \pi(x, y) \, dy = \mu(x), \quad \int \pi(x, y) \, dx = \nu(y)
+\nu(A) = \mu(T^{-1}(A))
 \end{equation}
+Let us unpack this definition:
+\begin{itemize}
+    \item \textbf{The Set $A$}: Imagine $A$ is a specific region in the target space (e.g., a set of images). The value $\nu(A)$ represents the total probability mass that must end up inside this set.
+    \item \textbf{The Pre-image} $T^{-1}(A)$: This represents the set of all starting locations $x$ that the map $T$ sends into the set $A$.
+    \item \textbf{Conservation of Mass}: The equation states that the total mass arriving in region $A$ ($\nu(A)$) must exactly equal the total mass that started in the source region $T^{-1}(A)$ ($\mu(T^{-1}(A))$).
+\end{itemize}
+In simple terms, the map $T$ must rearrange the mass such that the shape of the probability cloud changes from $\mu$ to $\nu$ without creating or destroying any probability mass.
 
-The Kantorovich problem minimizes expected cost over all valid plans:
+\subsubsection{The Kantorovich Relaxation (Probabilistic Transport)}
+The Monge formulation has a critical flaw: it forbids splitting probability mass. If the source is a single pile of probability mass (a Dirac delta probability distribution) and the target is two smaller piles, no function $T$ can map the single pile to two different target piles simultaneously.
 
+Leonid Kantorovich solved this in 1942 \cite{kantorovich1942translocation} by relaxing the problem. Instead of a deterministic map $T(x)$, we solve for a \textbf{transport plan} (or coupling) $\pi(x, y)$. This is a joint probability distribution where $\pi(x, y)$ represents the amount of mass moved from $x$ to $y$.
+
+The optimization problem becomes:
 \begin{equation}
 \min_{\pi \in \Pi(\mu, \nu)} \int c(x, y) \, d\pi(x, y)
 \end{equation}
 
-For the squared Euclidean cost $c(x, y) = \frac{1}{2}\|x - y\|^2$, the optimal plan defines a distance between distributions called the Wasserstein-2 distance or earth mover's distance.
+Here, $\Pi(\mu, \nu)$ is the set of all valid joint distributions where the marginals sum to $\mu$ and $\nu$ respectively.
+\begin{itemize}
+    \item \textbf{What is being minimized?} We integrate the cost $c(x, y)$ weighted by the amount of mass $\pi(x, y)$ moving between those points. We search for the plan $\pi$ that results in the lowest expected cost.
+    \item \textbf{Why is this better?} A transport plan allows "mass splitting." One unit of mass at $x$ can be sent partially to $y_1$ and partially to $y_2$, enabling solutions where Monge's formulation fails.
+\end{itemize}
 
-Our interest in optimal transport stems from its connection to probability flows. Rather than viewing transport as an instantaneous relocation, we can frame it as a dynamical problem: find a time-dependent velocity field that moves mass from $\mu$ to $\nu$ while minimizing a notion of kinetic energy. This is the Benamou-Brenier formulation, which we now develop in detail.
+\subsubsection{The Wasserstein Distance and the Earth Mover's Analogy}
+When the cost function is the squared Euclidean distance $c(x, y) = \|x - y\|^2$, the minimum value of the objective function defines a metric known as the \textbf{Wasserstein-2 Distance} ($W_2$):
+
+\begin{equation}
+W_2(\mu, \nu) = \left( \inf_{\pi \in \Pi(\mu, \nu)} \int \|x - y\|^2 \, d\pi(x, y) \right)^{1/2}
+\end{equation}
+
+
+
+\textbf{Deconstructing the Equation}:
+To understand this definition, let us break it down term by term:
+\begin{itemize}
+    \item \textbf{The Cost Integral} ($\int \|x - y\|^2 d\pi$): This term calculates the \textit{expected squared distance} mass travels under a specific transport plan $\pi$. It represents the total "effort" for that specific strategy.
+    \item \textbf{The Infimum} ($\inf$): "inf" stands for \textbf{infimum}, which is the mathematical generalization of "minimum." It tells us to search through \textit{every possible valid transport plan} $\pi$ in the set $\Pi(\mu, \nu)$ and find the one that results in the lowest possible cost. We are not interested in just any plan; we want the \textit{optimal} one.
+    \item \textbf{The Square Root} $(\dots)^{1/2}$: Finally, we take the square root of the minimum cost. This is analogous to taking the square root of variance to get standard deviation; it ensures the "units" of the Wasserstein distance match the units of the data space (e.g., pixel intensity) rather than the squared units.
+\end{itemize}
+
+\textbf{Distance Between Distributions}:
+In standard geometry, we measure the distance between two points. The Wasserstein distance generalizes this concept to measure the ``distance'' between two probability distributions (entire shapes). If $\mu$ and $\nu$ are identical, the cost is zero (mass stays put). If they are disjoint, the distance is determined by how far the mass must travel to transform one into the other.
+
+\textbf{The Earth Mover's Analogy}:
+This metric is frequently called the Earth Mover's Distance because of a vivid physical intuition:
+\begin{itemize}
+    \item \textbf{The Setup}: Imagine the source distribution $\mu$ is a pile of earth (dirt) of a certain shape, and the target distribution $\nu$ is a hole (trench) of a different shape but equal volume.
+    \item \textbf{The Task}: You must shovel the earth into the hole.
+    \item \textbf{The Cost}: The effort required to move a shovel-load of earth is proportional to the squared distance it is moved.
+    \item \textbf{The Metric}: The Earth Mover's Distance is the \textit{minimum possible total work} required to completely fill the hole with the pile.
+\end{itemize}
+
+Unlike other metrics (like \textbf{KL-divergence}) which look at pointwise overlap, the \textbf{Wasserstein distance} respects the underlying geometry of the space. Even if two distributions have zero overlap, if they are close to each other in space, the Earth Mover's Distance will be small, whereas \textbf{KL-divergence} would be infinite. This geometric awareness is why Optimal Transport is so powerful for generative modeling.
+
+Our interest in optimal transport stems from its connection to probability flows. Rather than viewing transport as an instantaneous relocation, we can frame it as a dynamical problem: find a time-dependent velocity field that moves probability mass from $\mu$ to $\nu$ while minimizing kinetic energy. This is the Benamou-Brenier formulation \cite{benamou2000computational}, which we now develop in detail.
 
 \subsection{The Benamou-Brenier Formulation}
 
-The Benamou-Brenier formulation \cite{benamou2000computational} recasts Optimal Transport from a static coupling problem into a dynamic fluid mechanics problem. Instead of simply asking "which point maps to which?", we ask: "how does the probability mass move over time to minimize cost?" We seek a time-dependent probability density $\rho_t(x)$ and a velocity field $v_t(x)$ for $t \in [0, 1]$ that satisfy the following conditions:
+The Benamou-Brenier formulation \cite{benamou2000computational} recasts Optimal Transport from a static coupling problem into a dynamic fluid mechanics problem. Instead of simply asking "which point maps to which?", we ask: "how does the probability mass move over time to minimize cost?" We seek a time-dependent probability density $p_t(x)$ and a velocity field $u_t(x)$ for $t \in [0, 1]$ that satisfy the following conditions:
 \begin{itemize}
-    \item \textbf{Boundary Conditions:} $\rho_0 = p_{\text{init}}$ (Source) and $\rho_1 = p_{\text{data}}$ (Target).
+    \item \textbf{Boundary Conditions:} $p_0 = p_{\text{init}}$ (Source) and $p_1 = p_{\text{data}}$ (Target).
     \item \textbf{Mass Conservation:} The density evolves according to the continuity equation:
     \begin{equation}
-    \frac{\partial \rho_t}{\partial t} + \nabla \cdot (\rho_t v_t) = 0
+    \frac{\partial p_t(x)}{\partial t} + \nabla \cdot (p_t(x) u_t(x)) = 0
     \end{equation}
     \item \textbf{Cost Minimization:} The total kinetic energy of the flow is minimized.
 \end{itemize}
 
 The kinetic energy functional $\mathcal{E}$ measures the total "cost" of the transport:
 \begin{equation}
-\mathcal{E}[\rho, v] = \int_0^1 \int_{\mathbb{R}^d} \frac{1}{2} \rho_t(x) \|v_t(x)\|^2 \, dx \, dt
+\mathcal{E}[p, u] = \int_0^1 \int_{\mathbb{R}^d} \frac{1}{2} p_t(x) \|u_t(x)\|^2 \, dx \, dt
 \end{equation}
-Physically, the term $\frac{1}{2} \rho \|v\|^2$ represents the kinetic energy density at a specific point. We integrate this over all space and all time.
-
-\begin{theorem}[Benamou-Brenier]
-The squared Wasserstein-2 distance $W_2^2(\mu, \nu)$ is exactly the minimum kinetic energy required to transport $\mu$ to $\nu$ while satisfying the continuity equation.
-\end{theorem}
+Physically, the term $\frac{1}{2} p_t(x) \|u_t(x)\|^2$ represents the kinetic energy density at a specific point $x$ and time $t$. We integrate this over all space and all time.
 
 \subsubsection{Deriving the Optimal Velocity Field}
 To determine the properties of the optimal velocity field, we employ the \textbf{Calculus of Variations}, a field of mathematical analysis that deals with maximizing or minimizing functionals (integrals).
 
 \paragraph{Primer: The Method of Lagrange Multipliers}
-To understand how we derive the optimal velocity field, we must first review the Method of Lagrange Multipliers.
+To understand how we derive the optimal velocity field using the Calculus of Variations, we must first master the intuition behind the Method of Lagrange Multipliers.
 
-Suppose we want to find the minimum value of a cost function $f(x)$ subject to a constraint $g(x) = 0$. We cannot simply set the derivative of $f(x)$ to zero, because the unconstrained minimum might lie outside the valid region defined by $g(x)$.
+Suppose we want to find the minimum value of a cost function $f(x)$ (e.g., minimizing energy) subject to a hard constraint $g(x) = c$ (e.g., staying on a specific path). We cannot simply find where the derivative of $f(x)$ is zero (the unconstrained minimum), because that optimal point might lie somewhere forbidden, outside the region defined by our constraint.
 
-Geometrically, the optimal solution occurs where the "force" pushing us toward the minimum of $f$ is exactly balanced by the constraint $g$. We formalize this by introducing a new variable $\lambda$ (the Lagrange multiplier) and constructing a combined function called the \textbf{Lagrangian}:
-\begin{equation}
-\mathcal{L}(x, \lambda) = f(x) - \lambda \cdot g(x)
-\end{equation}
-By finding the stationary points where the derivative of $\mathcal{L}$ is zero, we simultaneously satisfy the constraint and minimize the cost.
+To solve this, we must think geometrically.
 
-\paragraph{Extension to Fields (Calculus of Variations)}
-In our optimal transport problem, we apply this same logic, but at a higher level of abstraction:
+\begin{figure}[h]
+    \centering
+     \includegraphics[width=0.7\textwidth]{images/level_curves_gradient.png}
+    \caption{Visualizing a scalar cost function $f(x)$ using level curves. Each curve connects points of equal value. The gradient vectors $\nabla f$ (arrows) always point in the direction of steepest ascent and are everywhere perpendicular to the level curves.}
+    \label{fig:level_curves_gradients}
+\end{figure}
+
+\textbf{Step 1: The Landscape (Level Curves)}
+Imagine $f(x)$ represents the altitude of a terrain. We can visualize this terrain using \textbf{level curves} (or contour lines). A level curve is a line connecting all points with the same height. If you walk along a level curve, your elevation does not change.
+
+
+\textbf{Step 2: The Path (The Constraint)}
+The constraint equation $g(x) = c$ defines a specific path through this terrain. We are forced to walk only along this path. Our goal is to find the lowest point (point $x$ where $f(x)$ value is minimum) or the highest point (point $x$ where $f(x)$ value is maximum) that lies on this specific path.
+
+\textbf{Step 3: The "Kissing" Condition}
+Imagine walking along the path $g(x)=c$.
 \begin{itemize}
-    \item Instead of optimizing a simple variable $x$, we are optimizing entire \textbf{functions} (fields) $\rho_t(x)$ and $v_t(x)$.
-    \item Instead of a single constraint equation $g(x)=0$, we have a differential equation (the continuity equation) that must hold \textit{at every single point in space and time}.
+    \item If the path crosses a level curve of $f$, you are moving from a higher elevation to a lower one (or vice versa). This means you have not reached the minimum yet; you can keep walking in that direction to lower your cost.
+    \item You stop lowering your cost only when the path stops crossing level curves and instead runs \textit{along} one.
+\end{itemize}
+This occurs exactly where the constraint curve $g(x)=c$ just touches—or \textbf{"kisses"}—a level curve of $f(x)$. At this precise point of tangency, the path and the level curve share a \textbf{common tangent line}.
+
+
+\textbf{Step 4: From Tangents to Gradients}
+How do we express "common tangents" mathematically? We use gradients.
+Recall a fundamental property of the gradient vector $\nabla f$: \textit{The gradient is always perpendicular (normal) to the level curve.}
+\begin{itemize}
+    \item If the level curve of $f$ and the constraint curve $g$ are tangent (share a line), then their perpendicular vectors (normals) must be parallel.
+    \item Therefore, at the optimal point, the gradient of the cost $\nabla f$ must be parallel to the gradient of the constraint $\nabla g$.
 \end{itemize}
 
-Because the constraint applies everywhere, our Lagrange multiplier cannot be a single number $\lambda$. It must be a \textbf{function} $\phi(x, t)$—a scalar field defined over all space and time. You can think of this field $\phi$ as a variable "pressure" that acts locally to enforce mass conservation at every coordinate.
+We can express "parallel vectors" by stating that one is a scalar multiple of the other:
+\begin{equation}
+\nabla f(x) = \lambda \cdot \nabla g(x)
+\end{equation}
+The scalar $\lambda$ is the \textbf{Lagrange Multiplier}. It represents the ratio of the "forces" between the cost and the constraint.
+
+\textbf{Step 5: The Lagrangian}
+We can bundle this entire geometric argument into a single equation. We define the \textbf{Lagrangian} $\mathcal{L}$:
+\begin{equation}
+\mathcal{L}(x, \lambda) = f(x) - \lambda \cdot (g(x) - c)
+\end{equation}
+If we take the derivative of $\mathcal{L}$ with respect to $x$ and set it to zero, we get $\nabla f - \lambda \nabla g = 0$, which recovers our parallel gradient condition. If we differentiate with respect to $\lambda$, we recover the constraint $g(x) = c$. Thus, minimizing $\mathcal{L}$ solves the constrained problem.
+
+\paragraph{Extension to Fields (Calculus of Variations)}
+In our optimal transport problem, we apply this same logic, but we scale it up from finding a single point $x$ to finding entire functions.
+
+\textbf{1. From Points to Fields}
+In standard calculus, our variable $x$ is a vector in $\mathbb{R}^d$. In Optimal Transport, our "variables" are the density field $p_t(x)$ and velocity field $u_t(x)$ defined over all space and time. We are optimizing the "shape" of these functions.
+
+\textbf{2. From One Constraint to Infinite Constraints}
+In the simple primer, we had one constraint equation $g(x) = c$. In our flow problem, the constraint is the \textbf{Continuity Equation}:
+\begin{equation}
+\frac{\partial p_t(x)}{\partial t} + \nabla \cdot (p_t(x) u_t(x)) = 0
+\end{equation}
+Crucially, this equation must hold \textit{at every single point} in space $x$ and every moment in time $t$. This is effectively an infinite number of constraints—one for every coordinate $(x, t)$ in the $\mathbb{R}^d \times [0,1]$ space-time.
+
+\textbf{3. The Multiplier becomes a Field}
+Since we have a distinct constraint for every point in space-time, we need a distinct Lagrange multiplier for every point in space-time.
+\begin{itemize}
+    \item Just as a single constraint $g(x)=0$ gets a single scalar $\lambda$...
+    \item ...a constraint defined everywhere $g(x,t)=0$ gets a \textbf{multiplier function} $\phi_t(x)$.
+\end{itemize}
+
+We call this function $\phi_t(x)$ the \textbf{potential field}. Intuitively, you can think of $\phi_t(x)$ as a "variable pressure" field. Just as physical pressure arises in a fluid to enforce the constraint that water cannot be compressed, the potential $\phi_t(x)$ arises in our optimization to enforce the constraint that probability mass is conserved. It pushes and pulls on the velocity field $u_t(x)$ locally to ensure the continuity equation is never violated.
 
 \textbf{Step 1: Construct the Lagrangian} \\
 We define the Lagrangian functional $\mathcal{L}$ by adding the constraint term to the energy objective. We multiply the constraint equation (which should equal zero) by our multiplier field $\phi_t(x)$ and integrate the result over the entire domain. This sums up the "penalties" for violating the constraint across all space and time:
 \begin{equation}
-\mathcal{L}[\rho, v, \phi] = \underbrace{\int_0^1 \int_{\mathbb{R}^d} \frac{1}{2} \rho_t \|v_t\|^2 \, dx \, dt}_{\text{Objective (Kinetic Energy)}} - \underbrace{\int_0^1 \int_{\mathbb{R}^d} \phi_t \left( \frac{\partial \rho_t}{\partial t} + \nabla \cdot (\rho_t v_t) \right) \, dx \, dt}_{\text{Constraint terms}}
+\mathcal{L}[p, u, \phi] = \underbrace{\int_0^1 \int_{\mathbb{R}^d} \frac{1}{2} p_t(x) \|u_t(x)\|^2 \, dx \, dt}_{\text{Objective (Kinetic Energy)}} - \underbrace{\int_0^1 \int_{\mathbb{R}^d} \phi_t(x) \left( \frac{\partial p_t(x)}{\partial t} + \nabla \cdot (p_t(x) u_t(x)) \right) \, dx \, dt}_{\text{Constraint terms}}
 \end{equation}
 
 \textbf{Step 2: Integration by Parts (The Divergence Theorem)} \\
-We want to find the velocity field $v_t$ that minimizes $\mathcal{L}$. To do this, we need to take the functional derivative with respect to $v_t$. However, $v_t$ is currently "trapped" inside the divergence operator $\nabla \cdot (\rho_t v_t)$. To isolate it, we use \textbf{Integration by Parts} in high dimensions, which is a direct application of the \textbf{Divergence Theorem}.
+We want to find the velocity field $u_t$ that minimizes $\mathcal{L}$. To do this, we need to take the functional derivative with respect to $u_t(x)$. However, $u_t(x)$ is currently "trapped" inside the divergence operator $\nabla \cdot (p_t(x) u_t(x))$. To isolate it, we use \textbf{Integration by Parts} in high dimensions, which is a direct application of the \textbf{Divergence Theorem}.
 
 \textit{Theorem (Integration by Parts for Divergence):}
 For a scalar field $\phi$ and a vector field $F$, the product rule for divergence states: $\nabla \cdot (\phi F) = \phi (\nabla \cdot F) + F \cdot \nabla \phi$. Integrating this over a volume $V$ gives:
@@ -7497,40 +7606,61 @@ By the Divergence Theorem, the first term on the right becomes a surface integra
 \begin{equation}
 \int_V \nabla \cdot (\phi F) \, dx = \oint_{\partial V} (\phi F) \cdot n \, dS
 \end{equation}
-In our case, the domain is all of $\mathbb{R}^d$. We assume the density $\rho_t$ (and thus the flux $F = \rho_t v_t$) vanishes at infinity. Therefore, the boundary surface integral is zero. This leaves us with the fundamental identity:
+In our case, the domain is all of $\mathbb{R}^d$. We assume the density $p_t$ (and thus the flux $F = p_t(x) u_t(x)$) vanishes at infinity. Therefore, the boundary surface integral is zero. This leaves us with the fundamental identity:
 \begin{equation} \label{eq:ibp_identity}
-\int_{\mathbb{R}^d} \phi_t (\nabla \cdot (\rho_t v_t)) \, dx = - \int_{\mathbb{R}^d} (\rho_t v_t) \cdot \nabla \phi_t \, dx
+\int_{\mathbb{R}^d} \phi_t(x) (\nabla \cdot (p_t(x) u_t(x))) \, dx = - \int_{\mathbb{R}^d} (p_t(x) u_t(x)) \cdot \nabla \phi_t(x) \, dx
 \end{equation}
 
-Substituting (\ref{eq:ibp_identity}) back into our Lagrangian, we effectively "move" the derivative operator $\nabla$ from the velocity $v_t$ onto the potential $\phi_t$. The relevant part of the Lagrangian depending on $v_t$ becomes:
+Substituting (\ref{eq:ibp_identity}) back into our Lagrangian, we effectively "move" the derivative operator $\nabla$ from the velocity $u_t(x)$ onto the potential $\phi_t(x)$. The relevant part of the Lagrangian depending on $u_t(x)$ becomes:
 \begin{equation}
-\mathcal{L}_{\text{part}} = \int_0^1 \int_{\mathbb{R}^d} \left( \frac{1}{2} \rho_t \|v_t\|^2 + \rho_t v_t \cdot \nabla \phi_t \right) dx \, dt
+\mathcal{L}_{\text{part}} = \int_0^1 \int_{\mathbb{R}^d} \left( \frac{1}{2} p_t(x) \|u_t(x)\|^2 + p_t(x) u_t(x) \cdot \nabla \phi_t(x) \right) dx \, dt
 \end{equation}
 Note the sign change: the minus sign from the original Lagrangian cancels with the minus sign from the integration by parts, resulting in a positive term.
 
 \textbf{Step 3: Taking the Variation} \\
-Now that $v_t$ is algebraically exposed (no longer inside a differential operator), we can take the variation. We treat the integrand as a function $F(v) = \frac{1}{2}\rho \|v\|^2 + \rho v \cdot \nabla \phi$ and compute the gradient with respect to $v$:
+Now that $u_t(x)$ is algebraically exposed (no longer inside a differential operator), we can take the variation. We treat the integrand as a function $F(u_t(x)) = \frac{1}{2}p_t(x) \|u_t(x)\|^2 + p_t(x) u_t(x) \cdot \nabla \phi_t(x)$ and compute the gradient with respect to $u_t(x)$:
 \begin{itemize}
-    \item The derivative of $\frac{1}{2} \rho \|v\|^2$ is $\rho v$.
-    \item The derivative of $\rho v \cdot \nabla \phi$ (which is linear in $v$) is $\rho \nabla \phi$.
+    \item The derivative of $\frac{1}{2} p_t(x) \|u_t(x)\|^2$ is $p_t(x) u_t(x)$.
+    \item The derivative of $p_t(x) u_t(x) \cdot \nabla \phi_t(x)$ is $p_t(x) \nabla \phi_t(x)$.
 \end{itemize}
 Setting the variation to zero to find the stationary point:
 \begin{equation}
-\frac{\delta \mathcal{L}}{\delta v_t} = \rho_t v_t + \rho_t \nabla \phi_t = 0
+\frac{\delta \mathcal{L}}{\delta u_t(x)} = p_t(x) u_t(x) + p_t(x) \nabla \phi_t(x) = 0
 \end{equation}
 
 \textbf{Step 4: The Result} \\
-Factoring out the density $\rho_t(x)$ (and assuming $\rho_t(x) > 0$ along the path where mass is present), we obtain the defining condition of optimal transport:
+Factoring out the density $p_t(x)$ (and assuming $p_t(x) > 0$ along the path where mass is present), we obtain the defining condition of optimal transport:
 \begin{equation}
-v_t(x) = -\nabla \phi_t(x)
+u_t(x) = -\nabla \phi_t(x)
 \end{equation}
-This proves that the optimal velocity field is a \textbf{Gradient Field}. It is irrotational ($\nabla \times v = 0$) and determined entirely by the scalar potential function $\phi_t$.
+This proves that the optimal velocity field is a \textbf{Gradient Field}. It is irrotational ($\nabla \times u_t(x) = 0$) and determined entirely by the scalar potential function $\phi_t(x)$.
+
+\paragraph{Interpreting the Potential Function}
+It is crucial to understand what $\phi_t(x)$ represents and how it differs from the probability density $p_t(x)$.
+
+\begin{itemize}
+    \item \textbf{Probability Density $p_t(x)$ is the "Stuff":}
+    The density $p_t(x)$ tells us \textit{how much} probability mass is located at point $x$. 
+
+    \item \textbf{Potential Function $\phi_t(x)$ is the "Guide":}
+    The potential $\phi_t(x)$ is strictly distinct from the density. It does not represent mass; rather, it represents the \textbf{geometry of the transport}. You can think of $\phi_t(x)$ as a terrain overlaid on the space.
+    \begin{itemize}
+        \item The equation $u_t(x) = -\nabla \phi_t(x)$ implies that particles move in the direction of steepest descent on this potential terrain surface.
+        \item The \textit{slope} of $\phi_t(x)$ determines the speed of the flow. Steeper slopes create faster velocities.
+    \end{itemize}
+\end{itemize}
+
+\textbf{The Relationship:} While $\phi_t(x)$ is not the density itself, the two are intimately coupled through the optimization. The potential field effectively acts as a "pressure" field that arises to satisfy the continuity constraint.
+\begin{itemize}
+    \item If probability mass $p_t(x)$ is piling up where it shouldn't, the optimization adjusts the potential $\phi_t(x)$ to create a "slope" that drains the excess mass away.
+    \item Thus, $\phi_t(x)$ is the "navigation map" that the density $p_t(x)$ follows to reach the target distribution $p_{\text{data}}$ with minimal effort.
+\end{itemize}
 
 \subsubsection{Implications: The Geometry of Transport}
-The result $v_t = -\nabla \phi_t$ is physically profound. It implies that \textbf{Optimal Transport is Irrotational}.
+The result $u_t(x) = -\nabla \phi_t(x)$ is physically profound. It implies that \textbf{Optimal Transport is Irrotational}.
 \begin{itemize}
-    \item The optimal velocity field has zero curl ($\nabla \times v = 0$). There are no swirls or eddies in an optimal flow; mass moves directly toward its destination.
-    \item The particles follow the "gradient descent" of the potential field $\phi_t$.
+    \item The optimal velocity field has zero curl ($\nabla \times u_t(x) = 0$). There are no swirls or eddies in an optimal flow; mass moves directly toward its destination.
+    \item The particles follow the "gradient descent" of the potential field $\phi_t(x)$.
 \end{itemize}
 
 This result tells us that the optimal velocity field is not arbitrary; it is the gradient of a scalar potential. This corresponds to the concept of geodesics (shortest paths) in the Wasserstein space. In Euclidean space, minimizing kinetic energy (constant velocity) results in straight lines.
@@ -7546,7 +7676,7 @@ This result tells us that the optimal velocity field is not arbitrary; it is the
 \subsubsection{The Bridge to Rectified Flows}
 We have established that optimal transport minimizes kinetic energy. A fundamental result in mechanics is that the path which minimizes kinetic energy for a free particle is a \textbf{straight line} traversed at \textbf{constant velocity}.
 
-If we could construct a flow where every particle moves in a perfectly straight line from its starting noise coordinate $x_0$ to its data coordinate $x_1$, we would achieve the lowest possible transport cost (minimal kinetic energy). The vector field for such a flow would be trivial: $v_t(x_t) = x_1 - x_0$.
+If we could construct a flow where every particle moves in a perfectly straight line from its starting noise coordinate $x_0$ to its data coordinate $x_1$, we would achieve the lowest possible transport cost (minimal kinetic energy). The vector field for such a flow would be trivial: $u_t(x_t) = x_1 - x_0$.
 
 However, we do not know the pairing $(x_0, x_1)$ a priori. The standard Flow Matching objective we derived previously ensures the boundary conditions are met, but it results in curved, non-optimal paths.
 This raises a tantalizing question: \textit{Can we take a learned, curved flow and iteratively "straighten" it to approach the optimal transport solution?}
@@ -7597,15 +7727,31 @@ Given a learned velocity field $v_\theta(x, t)$, we can generate a sample by sol
 
 This ODE describes a deterministic trajectory through space. At each instant $t$, the position $x_t$ determines the velocity $v_\theta(x_t, t)$, which in turn determines how the position changes. Integrating from $t = 0$ to $t = 1$ produces a sample $x_1$ from the (approximately) data distribution.
 
-The connection between the Eulerian and Lagrangian views becomes clear when we consider the relationship between this ODE and the continuity equation. If we have a large ensemble of particles all following trajectories dictated by the same velocity field, the density of this ensemble evolves according to the continuity equation. Conversely, if we know the density evolution satisfies the continuity equation for velocity field $v_\theta$, then individual particles following the ODE will collectively maintain this density.
+\subsubsection{The Eulerian-Lagrangian Duality}
 
-This duality is precise and can be formalized through the pushforward of measures. If $x_0$ has distribution $p_0$ and evolves according to the ODE with velocity field $v_\theta$, then $x_t$ has distribution $p_t$, where $p_t$ satisfies:
+The connection between the particle-based (Lagrangian) view and the density-based (Eulerian) view is profound. To understand it, imagine a vast swarm of massless dust particles (probability mass) floating in space.
+
+\begin{itemize}
+    \item \textbf{The Lagrangian View (The Particle):}
+    Equation (\ref{eq:flow_ode}) tracks the path of a \textit{single} dust particle. If we solve this ODE for every single particle in the swarm, we know exactly where every particle is at any time $t$.
+
+    \item \textbf{The Eulerian View (The Cloud):}
+    Instead of tracking individuals, we track the \textit{density} of the cloud itself. If we look at a fixed region of space, the density $p_t(x)$ tells us how crowded the particles are in that region.
+\end{itemize}
+
+These two views are linked by the principle of \textbf{Conservation of Mass}. If the velocity field $v_\theta(x,t)$ causes the particles to spread out (diverge) in a certain region, the density in that region must decrease. Conversely, if the velocity field forces particles to clump together (converge), the density must increase.
+
+This physical intuition is formalized by the \textbf{Continuity Equation}. If the initial particle positions $x_0$ are distributed according to $p_0$, and every particle evolves according to the velocity field $v_\theta(x,t)$, then the resulting density field $p_t(x)$ \textit{must} satisfy:
 
 \begin{equation}
-\frac{\partial p_t}{\partial t} + \nabla \cdot (p_t v_\theta(\cdot, t)) = 0
+\underbrace{\frac{\partial p_t(x)}{\partial t}}_{\text{Rate of Density Change}} + \underbrace{\nabla \cdot (p_t(x) v_\theta(x, t))}_{\text{Net Outflow of Flux}} = 0
 \end{equation}
 
-This is exactly the continuity equation with velocity field $v_\theta$. The Lagrangian trajectories (solving the ODE) and the Eulerian density evolution (solving the PDE) are two sides of the same coin.
+Thus, we have a precise duality:
+\begin{enumerate}
+    \item \textbf{Solving the ODE} (moving samples along trajectories) is equivalent to \textbf{simulating the PDE} (evolving the probability density).
+    \item The \textbf{velocity field} $v_\theta(x,t)$ is the bridge that connects the flow of probability mass (trajectories of dust particles) to the change in probability density (density of dust particles).
+\end{enumerate}
 
 \subsection{Numerical Integration Methods}
 
