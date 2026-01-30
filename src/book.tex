@@ -7054,6 +7054,14 @@ A scalar field $p_t: \mathbb{R}^d \times [0, 1] \to \mathbb{R}_{\geq 0}$. The sc
 \textbf{2. The Velocity Vector Field $u_t(x)$:}
 A vector field $u_t: \mathbb{R}^d \times [0, 1] \to \mathbb{R}^d$. The vector $u_t(x)$ points in the direction probability mass would move if it were located at position $x \in \mathbb{R}^d$ at time $t \in [0,1]$.
 
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{images/eulerian_lagrangian_probability_flow.png}
+    \caption{Eulerian vs.\ Lagrangian views of probability mass flow.
+    }
+    \label{fig:eulerian-lagrangian-probability}
+\end{figure}
+
 \subsection{Eulerian vs. Lagrangian View}
 Having defined the density and velocity fields, we now establish the mathematical framework for tracking how probability mass moves through  $\mathbb{R}^d$ space. In fluid dynamics, there are two distinct ways to observe this motion, distinguished by how they treat the control volume containing the mass:
 
@@ -7525,7 +7533,7 @@ To solve this, we must think geometrically.
 \begin{figure}[h]
     \centering
      \includegraphics[width=0.7\textwidth]{images/level_curves_gradient.png}
-    \caption{Visualizing a scalar cost function $f(x)$ using level curves. Each curve connects points of equal value. The gradient vectors $\nabla f$ (arrows) always point in the direction of steepest ascent and are everywhere perpendicular to the level curves.}
+    \caption{Visualizing a scalar cost function $f$ using level curves. Each curve connects points of equal value. The gradient vectors $\nabla f$ (arrows) always point in the direction of steepest ascent and are everywhere perpendicular to the level curves.}
     \label{fig:level_curves_gradients}
 \end{figure}
 
@@ -7566,6 +7574,22 @@ We can bundle this entire geometric argument into a single equation. We define t
 \end{equation}
 If we take the derivative of $\mathcal{L}$ with respect to $x$ and set it to zero, we get $\nabla f - \lambda \nabla g = 0$, which recovers our parallel gradient condition. If we differentiate with respect to $\lambda$, we recover the constraint $g(x) = c$. Thus, minimizing $\mathcal{L}$ solves the constrained problem.
 
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.85\linewidth]{images/lagrange_multipliers.png}
+    \caption{
+    Geometric interpretation of the Method of Lagrange Multipliers.
+    Shown are level curves of the objective function $f(x)$, labeled
+    $f = c_1, c_2, c_3$, with decreasing values toward the center, together
+    with a constraint curve $g(x) = c$.
+    The constrained optimum $x^\ast$ occurs at the point where the constraint
+    curve is tangent to a level curve of $f$.
+    At this point, the gradients $\nabla f(x^\ast)$ and $\nabla g(x^\ast)$ are
+    parallel, illustrating the necessary optimality condition
+    $\nabla f(x^\ast) = \lambda \nabla g(x^\ast)$.
+    }
+    \label{fig:lagrange-multipliers-geometry}
+\end{figure}
 \paragraph{Extension to Fields (Calculus of Variations)}
 In our optimal transport problem, we apply this same logic, but we scale it up from finding a single point $x$ to finding entire functions.
 
@@ -7596,6 +7620,23 @@ We define the Lagrangian functional $\mathcal{L}$ by adding the constraint term 
 
 \textbf{Step 2: Integration by Parts (The Divergence Theorem)} \\
 We want to find the velocity field $u_t$ that minimizes $\mathcal{L}$. To do this, we need to take the functional derivative with respect to $u_t(x)$. However, $u_t(x)$ is currently "trapped" inside the divergence operator $\nabla \cdot (p_t(x) u_t(x))$. To isolate it, we use \textbf{Integration by Parts} in high dimensions, which is a direct application of the \textbf{Divergence Theorem}.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/divergence-theorem.png}
+    \caption{
+    Visualization of the Divergence Theorem for a vector field weighted by a scalar field.
+    A smooth, closed volume $V$ with boundary $\partial V$ is shown as a semi-transparent
+    three-dimensional domain. Inside $V$, a vector field $F(x)$ is depicted by sparse arrows,
+    modulated by a scalar field $\phi(x)$ indicated through gentle color variation.
+    The interior annotation $\nabla \cdot (\phi F)$ represents the volumetric divergence.
+    On the boundary $\partial V$, outward-pointing unit normal vectors $n$ are shown, along with
+    surface flux vectors corresponding to $(\phi F)\cdot n\, dS$.
+    This illustration emphasizes the equivalence between the volume integral of the divergence
+    and the total outward flux across the boundary.
+    }
+    \label{fig:divergence-theorem-phiF}
+\end{figure}
 
 \textit{Theorem (Integration by Parts for Divergence):}
 For a scalar field $\phi$ and a vector field $F$, the product rule for divergence states: $\nabla \cdot (\phi F) = \phi (\nabla \cdot F) + F \cdot \nabla \phi$. Integrating this over a volume $V$ gives:
@@ -7655,6 +7696,27 @@ It is crucial to understand what $\phi_t(x)$ represents and how it differs from 
     \item If probability mass $p_t(x)$ is piling up where it shouldn't, the optimization adjusts the potential $\phi_t(x)$ to create a "slope" that drains the excess mass away.
     \item Thus, $\phi_t(x)$ is the "navigation map" that the density $p_t(x)$ follows to reach the target distribution $p_{\text{data}}$ with minimal effort.
 \end{itemize}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.95\linewidth]{images/optimal_transport_gradient_flow.png}
+    \caption{
+    Optimal transport as a gradient flow.
+    A continuous spatial domain is shown together with a smooth scalar potential
+    $\phi_t(x)$, visualized as a gently undulating surface whose geometry encodes
+    the potential landscape.
+    The probability density $p_t(x)$ is represented as a semi-transparent mass
+    distributed over the domain and evolving smoothly in time.
+    The velocity field $u_t(x)$ is depicted by arrows tangent to the domain,
+    pointing in the direction of steepest descent of the potential, illustrating
+    the gradient-flow structure
+    $u_t(x) = -\nabla \phi_t(x)$.
+    Regions of higher density coincide with steeper slopes of the potential,
+    visually conveying the coupling between mass transport and the underlying
+    potential in optimal transport dynamics.
+    }
+    \label{fig:optimal-transport-gradient-flow}
+\end{figure}
+
 
 \subsubsection{Implications: The Geometry of Transport}
 The result $u_t(x) = -\nabla \phi_t(x)$ is physically profound. It implies that \textbf{Optimal Transport is Irrotational}.
