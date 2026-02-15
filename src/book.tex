@@ -109,6 +109,8 @@ Generative Artificial Intelligence (GenAI) represents one of the most transforma
 
 This chapter explores the key research milestones that paved the way for today's generative AI systems. Each breakthrough built upon previous work, gradually expanding our understanding of how machines can learn, represent knowledge, and ultimately generate novel content. From the earliest mathematical models of neurons to the attention mechanisms that revolutionized natural language processing, this historical journey reveals both the persistence of fundamental ideas and the explosive impact of recent innovations.
 
+This chapter refers to several foundational mathematical formulas that define the key milestones in this historical journey. If you are not mathematically inclined, please feel free to skim the formulas; we  break down this math in more detail in the following chapter.
+
 \section{The Foundations: Early Neural Network Theory}
 
 \subsection{The McCulloch-Pitts Neuron (1943)}
@@ -7580,12 +7582,12 @@ If we take the derivative of $\mathcal{L}$ with respect to $x$ and set it to zer
     \caption{
     Geometric interpretation of the Method of Lagrange Multipliers.
     Shown are level curves of the objective function $f(x)$, labeled
-    $f = c_1, c_2, c_3$, with decreasing values toward the center, together
+    $f = c_1, c_2, ...$, together
     with a constraint curve $g(x) = c$.
-    The constrained optimum $x^\ast$ occurs at the point where the constraint
+    The constrained minimum $x^\ast$ occurs at the point where the constraint
     curve is tangent to a level curve of $f$.
     At this point, the gradients $\nabla f(x^\ast)$ and $\nabla g(x^\ast)$ are
-    parallel, illustrating the necessary optimality condition
+    collinear along the blue arrow, illustrating the necessary optimality condition
     $\nabla f(x^\ast) = \lambda \nabla g(x^\ast)$.
     }
     \label{fig:lagrange-multipliers-geometry}
