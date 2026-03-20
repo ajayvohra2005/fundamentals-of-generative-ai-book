@@ -1538,25 +1538,145 @@ where $\mathbf{W}^1$ expands the dimension by 4× and $\mathbf{W}^2$ projects it
 
 \section{Vision Transformers: Processing Images}
 
-Transformers can be adapted to process images by converting spatial structure into sequences. The Vision Transformer (ViT) approach involves ``patchification'' (Figure \ref{fig:vit_patchify}).
+Transformers can be adapted to process images by converting spatial structure into
+sequences. Unlike text, which is already a discrete sequence of tokens, images are
+continuous 2D grids of pixels. The Vision Transformer (ViT)
+\cite{dosovitskiy2020image} bridges this gap through \textit{patchification}:
+dividing the image into a regular grid of small patches, converting each patch
+into a vector, and treating the resulting sequence as the transformer's input---in
+direct analogy to how words are converted into token embeddings in a language model
+(Figure~\ref{fig:vit_patchify}). How image token sequences are combined with text in multimodal models depends on the architecture. The simplest approach — used in most modern systems — concatenates projected image embeddings directly into the text token sequence.
 
 \begin{figure}[htbp]
     \centering
-    % Placeholder: Use the patchify diagram from PDF Page 9
     \includegraphics[width=0.9\textwidth]{images/vit_patchify.png}
-    \caption{Vision Transformers split an image into fixed-size patches, flatten them, and apply a linear projection to create input embeddings analogous to text tokens.}
+    \caption{Standard ViT patchification. An input image is divided into a regular
+    grid of $P{\times}P$ patches. Each patch is flattened into a vector of length
+    $P^2 C$, then linearly projected to the model's hidden dimension $h$, producing
+    a sequence of $N = HW/P^2$ patch embeddings analogous to text token embeddings.
+    A learnable \texttt{[CLS]} token is prepended for classification tasks.}
     \label{fig:vit_patchify}
 \end{figure}
 
 \subsection{Patchification and Projection}
 
-An image is divided into fixed-size patches (commonly 16×16 pixels). Each patch is flattened into a vector and linearly projected to the model's hidden dimension:
+Given an input image of shape $(H, W, C)$---height, width, and number of channels
+(e.g., $C=3$ for RGB)---the image is divided into a grid of $N = HW / P^2$
+non-overlapping square patches, each of spatial size $P \times P$ pixels. A
+typical choice is $P = 16$, which yields $N = 196$ patches for a
+$224{\times}224$ image.
+
+\textbf{Flattening.} Each $P \times P \times C$ patch is rearranged
+into a one-dimensional vector by concatenating all pixel values, producing a
+vector of length $P^2 C$. For $P{=}16$ and $C{=}3$, each patch becomes a
+768-dimensional vector. Collecting all $N$ patches gives a matrix
+$\mathbf{P} \in \mathbb{R}^{N \times P^2 C}$.
+
+\textbf{Linear Projection.} Each flattened patch is projected to the
+model's hidden dimension $h$ via a shared learned weight matrix
+$\mathbf{W}_{proj} \in \mathbb{R}^{P^2 C \times h}$:
 
 \begin{equation}
-\mathbf{X}_{patch} = \text{Patches} \cdot \mathbf{W}_{proj}
+    \mathbf{X}_{patch} = \mathbf{P} \cdot \mathbf{W}_{proj},
+    \qquad \mathbf{X}_{patch} \in \mathbb{R}^{N \times h}
 \end{equation}
 
-Position embeddings are added to encode spatial location, and the resulting sequence is processed by standard transformer layers.
+This projection plays the same role as the token embedding lookup table in a
+language model, mapping raw inputs to the hidden dimension used throughout the
+transformer.
+
+\textbf{Position Embeddings and CLS Token.} Since the flattened sequence
+loses all spatial ordering, learnable 1D position embeddings are added to each
+patch embedding. A special learnable \texttt{[CLS]} token is prepended to the
+sequence; its final representation is used as the image-level embedding for
+classification tasks.
+
+\textbf{Why patches and not pixels?} Attending over every pixel of a
+$224{\times}224$ image would require processing a sequence of 50,176 tokens,
+making the quadratic cost of self-attention completely intractable. With
+$P{=}16$, the sequence shrinks to 196 tokens---a 256$\times$ reduction---while
+each patch still captures a meaningful local region.
+
+\subsection{Recent Variants in Patchification}
+
+Standard ViT patchification is rigid: it requires resizing every image to a fixed
+square resolution, uses a fixed patch size, and discards the original aspect ratio.
+This introduces distortion, wastes compute on padding, and loses spatial structure
+that may be semantically meaningful. A wave of recent work addresses these
+limitations.
+
+\subsubsection{Aspect-Ratio Preserving Patchification (Pix2Struct)}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/pix2struct_patchify.png}
+    \caption{Pix2Struct aspect-ratio-preserving patchification
+    \cite{lee2023pix2struct}. Rather than resizing to a fixed square, the image
+    is scaled so that the maximum number of $P{\times}P$ patches fits within a
+    token budget $T_{max}$. The resulting variable grid uses a learnable 2D
+    positional encoding indexed by row and column to preserve spatial layout.}
+    \label{fig:pix2struct}
+\end{figure}
+
+Pix2Struct \cite{lee2023pix2struct} preserves the original image aspect ratio
+by scaling the image to fit within a maximum sequence length budget $T_{max}$,
+then extracting as many fixed-size $P \times P$ patches as possible without any
+padding or distortion. The variable spatial layout (e.g., $r$ rows and $c$
+columns, $r \neq c$) is encoded via a learnable 2D positional encoding that
+explicitly represents each patch's row and column index, rather than a flat 1D
+index. This is particularly valuable for document and chart understanding, where
+the spatial arrangement of text and graphical elements is semantically critical
+and distortion from forced square resizing causes significant information loss.
+
+\subsubsection{Flexible Patch Sizes (FlexiViT)}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/flexivit_patchify.png}
+    \caption{FlexiViT variable patch sizes \cite{beyer2023flexivit}. A single
+    model is trained by randomly sampling a patch size at each step from a
+    predefined set. A shared base weight matrix $\mathbf{W}_{base}$ is
+    dynamically resized via interpolation to match the sampled $P$. Smaller $P$
+    yields longer sequences and higher accuracy; larger $P$ yields shorter
+    sequences and faster inference.}
+    \label{fig:flexivit}
+\end{figure}
+
+FlexiViT \cite{beyer2023flexivit} trains a single model to handle multiple patch
+sizes by sampling a patch size $P$ uniformly at random from a predefined set
+(e.g., $\{8, 10, 12, \ldots, 48\}$ for a $240{\times}240$ image) at each
+training step. Rather than maintaining a separate projection matrix for each $P$,
+FlexiViT maintains one base weight matrix $\mathbf{W}_{base}$ of fixed size and
+resizes it via interpolation to match the current $P$. This parameter sharing
+ensures adequate training of all resolutions without the memory and design
+overhead of multiple separate matrices. At inference time, $P$ can be chosen
+freely: a smaller $P$ produces longer sequences and higher accuracy, while a
+larger $P$ reduces sequence length and speeds up inference, giving a smooth
+tunable accuracy--compute trade-off within a single checkpoint.
+
+\subsubsection{Native Resolution Processing (NaViT)}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/navit_patchify.png}
+    \caption{NaViT Patch n' Pack \cite{dehghani2023navit}. Images of different
+    resolutions and aspect ratios are patchified at their native resolution and
+    their patch sequences are packed into a single training sequence. Attention
+    masks (shown as block-diagonal structure) prevent patches from different
+    images attending to one another, preserving per-image independence.}
+    \label{fig:navit}
+\end{figure}
+
+NaViT (Native Resolution ViT) \cite{dehghani2023navit} eliminates fixed-resolution
+resizing entirely. Each image is patchified at its original resolution and aspect
+ratio, and the resulting variable-length patch sequences from multiple images are
+\textit{packed} into a single training sequence---a technique called
+\textit{Patch n' Pack}, inspired by sequence packing in NLP. Attention masks enforce
+a block-diagonal structure that prevents patches from different images attending to
+one another, preserving per-image independence. This removes distortion completely,
+improves training efficiency (no wasted compute on padding short images to a fixed
+length), and at inference time allows resolution to be adjusted freely to trade
+cost against performance.
 
 \section{Pre-training Encoder Models: Masked Language Modeling}
 
@@ -11268,6 +11388,54 @@ F. Liu et al., ``RemoteCLIP: A Vision Language Foundation Model for Remote Sensi
 A. Van Etten, D. Lindenbaum, and T. M. Bacastow, 
 \newblock ``SpaceNet: A Remote Sensing Dataset and Challenge Series,'' 
 \newblock \emph{arXiv preprint arXiv:1807.01232}, 2018.
+
+\bibitem{dosovitskiy2020image}
+A.~Dosovitskiy, L.~Beyer, A.~Kolesnikov, D.~Weissenborn, X.~Zhai,
+T.~Unterthiner, M.~Dehghani, M.~Minderer, G.~Heigold, S.~Gelly, J.~Uszkoreit,
+and N.~Houlsby,
+``An image is worth 16x16 words: Transformers for image recognition at scale,''
+\textit{arXiv preprint arXiv:2010.11929}, 2020.
+
+\bibitem{xiao2021early}
+T.~Xiao, M.~Singh, E.~Mintun, T.~Darrell, P.~Doll{\'a}r, and R.~Girshick,
+``Early convolutions help transformers see better,''
+in \textit{Advances in Neural Information Processing Systems (NeurIPS)},
+vol.~34, pp.~30392--30400, 2021.
+
+\bibitem{chen2021transunet}
+J.~Chen, Y.~Lu, Q.~Yu, X.~Luo, E.~Adeli, Y.~Wang, L.~Lu, A.~L.~Yuille,
+and Y.~Zhou,
+``{TransUNet}: Transformers make strong encoders for medical image
+segmentation,''
+\textit{arXiv preprint arXiv:2102.04306}, 2021.
+
+\bibitem{lee2023pix2struct}
+K.~Lee, J.~Joshi, I.~Turc, X.~Chang, C.~Shi, J.~Carbonell, A.~Uszkoreit,
+and N.~Houlsby,
+``{Pix2Struct}: Screenshot parsing as pretraining for visual language
+understanding,''
+in \textit{Proceedings of the 40th International Conference on Machine
+Learning (ICML)}, pp.~18893--18912, 2023.
+
+\bibitem{beyer2023flexivit}
+L.~Beyer, P.~Izmailov, A.~Kolesnikov, M.~Caron, S.~Kornblith, X.~Zhai,
+M.~Minderer, M.~Tschannen, I.~Alabdulmohsin, and F.~Pavetic,
+``{FlexiViT}: One model for all patch sizes,''
+in \textit{Proceedings of the IEEE/CVF Conference on Computer Vision and
+Pattern Recognition (CVPR)}, pp.~14496--14506, 2023.
+
+\bibitem{dehghani2023navit}
+M.~Dehghani, B.~Mustafa, J.~Djolonga, J.~Heek, M.~Minderer, M.~Caron,
+A.~Steiner, J.~Puigcerver, R.~Geirhos, I.~Alabdulmohsin, A.~Kolesnikov,
+T.~Kipf, N.~Houlsby, and X.~Zhai,
+``Patch n' Pack: {NaViT}, a vision transformer for any aspect ratio and
+resolution,''
+\textit{arXiv preprint arXiv:2307.06304}, 2023.
+
+\bibitem{ronen2023adaptive}
+R.~Ronen, E.~Zheltonozhskii, C.~Baskin, T.~Glam, and A.~M.~Bronstein,
+``Quadformer: Quadtree-based adaptive tokenization for vision transformers,''
+\textit{arXiv preprint}, 2023.
 
 
 \end{thebibliography}
