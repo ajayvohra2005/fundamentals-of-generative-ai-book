@@ -1398,6 +1398,7 @@ The trend in recent years has strongly favored decoder-only architectures for la
 \section{Transformer Encoder Architecture}
 
 \subsection{High-Level Structure}
+\label{sec:encoder}
 
 The transformer encoder processes input sequences into contextualized representations. As shown in Figure \ref{fig:encoder_arch}, the architecture consists of:
 
@@ -1485,6 +1486,7 @@ The attention mechanism uses three learned transformations:
 \end{itemize}
 
 \subsection{Multi-Head Architecture}
+\label{sec:multi-head-attention}
 
 Rather than using a single attention mechanism, transformers use multiple attention heads in parallel. As shown in Figure \ref{fig:multi_head_attention}, the input is split across $a$ heads of dimension $d$, processed independently, and then concatenated such that $ad = h$.
 
@@ -1536,7 +1538,8 @@ The structure consists of two linear transformations with a nonlinearity:
 
 where $\mathbf{W}^1$ expands the dimension by 4× and $\mathbf{W}^2$ projects it back. The expansion provides capacity for the MLP to learn complex transformations, accounting for about two-thirds of the model's parameters.
 
-\section{Vision Transformers: Processing Images}
+\section{Vision Transformers}
+\label{sec:vit}
 
 Transformers can be adapted to process images by converting spatial structure into
 sequences. Unlike text, which is already a discrete sequence of tokens, images are
@@ -1937,42 +1940,559 @@ Recent trends strongly favor decoder-only architectures for large language model
 
 \section{Architectural Innovations}
 
-\subsection{Mixture of Experts (MoE)}
-MoE architectures fundamentally decouple model capacity from inference cost by utilizing conditional computation. While early iterations like the Switch Transformer demonstrated the viability of routing tokens to a single expert \cite{fedus2022switch}, recent innovations have focused on granular routing and "active parameter" efficiency. Notably, models like Mixtral 8x7B utilize a sparse Top-2 routing mechanism, where each token is processed by two selected experts, allowing the model to match the performance of much larger dense models (e.g., Llama 2 70B) while using significantly fewer active parameters during inference \cite{jiang2024mixtral}.
+The transformer architecture described in the preceding sections has proven
+remarkably stable as a foundation, but the demands of deploying models at
+scale have driven a sustained wave of innovation around it. These innovations
+share a common tension: every improvement to model capability tends to
+increase computational cost, memory consumption, or both, while practical
+deployment imposes hard constraints on all three. The subsections below trace
+how the field has responded to this tension---first by making the core
+mechanisms of attention more efficient, then by rethinking how expert capacity
+is allocated across a model, and finally by extending the architecture to
+handle multiple modalities natively. Taken together, they represent not a
+departure from the transformer but a maturing of it.
+
+% ------------------------------------------------------------
+\subsection{Flash Attention}
+% ------------------------------------------------------------
+
+Attention, as defined in Section~\ref{sec:multi-head-attention}, requires computing the
+full $N \times N$ matrix of dot products between queries and keys, where $N$
+is the sequence length. The memory required to store this matrix grows
+quadratically with $N$, and---crucially---the intermediate results must be
+written to and read from GPU high-bandwidth memory (HBM) at every step of the
+computation. For long sequences this memory traffic, not arithmetic, becomes
+the dominant cost.
+
+FlashAttention~\cite{dao2022flashattention} addressed this by recognising that
+the softmax normalisation over the full row can be computed \emph{online},
+without ever materialising the complete $N \times N$ matrix. As illustrated in
+Figure~\ref{fig:flash_attn_algo}, the algorithm tiles the query and key-value
+matrices into blocks that fit in the GPU's fast on-chip memory (SRAM),
+computes attention block by block, and maintains running
+statistics---the maximum logit and the log-sum-exp accumulator---that allow
+the softmax to be corrected as each new block is processed. The attention
+output is accumulated directly, and the large intermediate matrix is never
+written to HBM. This reduces memory usage from $O(N^2)$ to $O(N)$ in the
+attention layer, and cuts the number of slow memory reads and writes by a
+factor proportional to the block size.
+
+FlashAttention-2~\cite{dao2023flashattention2} refined the tiling strategy to
+improve parallelism across the sequence dimension and to reduce the number of
+non-matrix-multiply operations, which consume disproportionate time relative
+to the highly optimised matrix multiply units available on modern hardware.
+
+FlashAttention-3~\cite{shah2024flashattention3} introduced a further
+algorithmic advance: \emph{producer-consumer asynchrony}. On hardware that
+supports independent execution of data movement and matrix computation,
+FlashAttention-3 assigns separate computational threads to loading the next
+tile and computing attention on the current tile, so the two operations
+overlap in time. It also interleaves the softmax rescaling---a relatively
+cheap elementwise operation---with the subsequent block matrix multiply,
+further hiding its latency. Together these changes yield roughly 1.5--2$\times$
+additional speedup over FlashAttention-2 on recent hardware, while maintaining
+exact numerical equivalence. Support for FP8 low-precision arithmetic, with
+carefully managed quantisation error, pushes throughput higher still.
+
+The practical impact of the FlashAttention line of work has been significant:
+it enabled training and inference on sequence lengths that were previously
+memory-prohibitive, directly contributing to the expansion of context windows
+from a few thousand tokens to hundreds of thousands in production models.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\textwidth]{images/moe.png}
-    \caption{Mixture of Experts Architecture (MoE)}
+    \includegraphics[width=0.7\textwidth]{images/flash_attn.png}
+    \caption{Flash Attention Algorithm. By tiling the attention computation
+    into SRAM-resident blocks and maintaining online softmax statistics, the
+    algorithm avoids materialising the full $N \times N$ attention matrix in
+    HBM, reducing memory usage from $O(N^2)$ to $O(N)$.}
+    \label{fig:flash_attn_algo}
 \end{figure}
 
-\subsection{Rotary Position Embeddings (RoPE)}
-RoPE unifies absolute and relative position encoding by rotating query and key vectors in a complex vector space \cite{su2024roformer}. Recent research has focused on extending RoPE to handle context lengths far beyond those seen during training (Extrapolation). Techniques like YaRN (Yet another RoPE extensioN) introduce a method to modify the RoPE rotation frequency (NTK-aware scaling) and attention entropy, effectively allowing models trained on limited context windows to generalize to sequences of up to 128k tokens without fine-tuning on the full length \cite{peng2023yarn}.
+% ------------------------------------------------------------
+\subsection{Grouped-Query Attention and Multi-Head Latent Attention}
+% ------------------------------------------------------------
 
-\subsection{Grouped-Query Attention (GQA)}
-As models scale, the memory bandwidth required to load the Key-Value (KV) cache becomes a primary bottleneck. Grouped-Query Attention (GQA) addresses this by interpolating between Multi-Head Attention (MHA) and Multi-Query Attention (MQA). Instead of a unique KV head for every query head (MHA) or a single KV head for all query heads (MQA), GQA divides query heads into $G$ groups, each sharing a single KV head. This innovation reduces KV cache size by a factor of $G$, significantly increasing decoding throughput while maintaining model quality closer to MHA than MQA \cite{ainslie2023gqa}.
+A separate bottleneck emerges at inference time. Autoregressive generation
+requires, at each step, loading the cached key and value vectors for all
+previous tokens from memory. As sequence length and batch size grow, the
+bandwidth required to read this \emph{KV cache} becomes the primary limit on
+generation throughput.
+
+\textbf{Grouped-Query Attention (GQA)}~\cite{ainslie2023gqa} addresses this
+by sharing key and value projections across groups of query heads. In standard multi-head attention
+(MHA) with $n_h$ heads, each head maintains its own K and V projections, so
+the KV cache scales as $O(n_h \cdot L)$ where $L$ is the sequence length.
+Multi-query attention (MQA) , as shown in
+Figure~\ref{fig:mqa}, reduces this to a single shared K and V pair,
+dramatically shrinking the cache but at the cost of representational capacity.
+GQA interpolates: the $n_h$ query heads are divided into $G$ groups, and all
+heads within a group share one K and one V projection, as shown in
+Figure~\ref{fig:gqa}. The KV cache scales as
+$O(G \cdot L)$ rather than $O(n_h \cdot L)$, and empirically a small number
+of groups (often 4--8) recovers nearly all of MHA's quality while reducing
+cache size by a factor of $n_h / G$.
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.7\textwidth]{images/mqa.png}
     \caption{Multi Query Attention (MQA)}
+    \label{fig:mqa}
 \end{figure}
 
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.7\textwidth]{images/gqa.png}
     \caption{Grouped Query Attention (GQA)}
+    \label{fig:gqa}
 \end{figure}
 
-\subsection{Flash Attention}
-Flash Attention revolutionized transformer efficiency by making attention algorithms "IO-aware," tiling memory blocks to minimize expensive reads/writes between high-bandwidth memory (HBM) and on-chip SRAM \cite{dao2022flashattention}. The subsequent FlashAttention-2 introduces further optimizations, such as parallelizing the attention computation over the sequence dimension and reducing non-matmul FLOPs. These improvements offer a 2x speedup over the original implementation and enable training on sequence lengths previously impossible due to memory constraints \cite{dao2023flashattention2}.
+\textbf{Multi-Head Latent Attention (MLA)}~\cite{deepseekai2024deepseekv2}
+takes a fundamentally different approach. Rather than reducing the number of
+KV heads, MLA compresses the joint key-value representation into a single
+low-dimensional \emph{latent vector} per token, which is the only quantity
+that needs to be cached. Full-rank keys and values are reconstructed at query
+time via learned up-projection matrices.
+
+Formally, let $\mathbf{h}_t \in \mathbb{R}^d$ be the attention input for
+token $t$. MLA computes a compressed latent:
+
+\begin{equation}
+\mathbf{c}_t^{KV} = \mathbf{W}^{DKV} \mathbf{h}_t, \quad
+\mathbf{c}_t^{KV} \in \mathbb{R}^{d_c}, \quad d_c \ll d_h n_h
+\end{equation}
+
+where $\mathbf{W}^{DKV}$ is a learned down-projection. At query time, keys
+and values are reconstructed:
+
+\begin{equation}
+\mathbf{K}_t = \mathbf{W}^{UK} \mathbf{c}_t^{KV}, \qquad
+\mathbf{V}_t = \mathbf{W}^{UV} \mathbf{c}_t^{KV}
+\end{equation}
+
+Only $\mathbf{c}_t^{KV}$ is stored in the cache; the up-projections
+$\mathbf{W}^{UK}$ and $\mathbf{W}^{UV}$ are shared model parameters. This
+reduces the KV cache footprint by a factor of approximately $d_h n_h / d_c$
+compared to standard MHA---in practice more than $90\%$---while retaining the
+full expressiveness of multi-head attention because the up-projections can
+reconstruct distinct K and V matrices for each head. Positional information
+is handled via a decoupled rotary embedding applied to a separate set of query
+and key projections, so that the compressed latent itself does not depend on
+absolute position and can be cached without modification.
+
+GQA and MLA represent successive points on a design frontier: GQA reduces the
+number of KV heads while keeping full-rank representations; MLA keeps a single
+latent per token while recovering full-rank representations at query time. Both
+are motivated by the same constraint---memory bandwidth at inference---and both
+are exact rather than approximate.
+
+% ------------------------------------------------------------
+\subsection{Rotary Position Embeddings (RoPE)}
+% ------------------------------------------------------------
+ 
+The transformer's self-attention mechanism is permutation-invariant: it treats
+its input as an unordered set and has no inherent notion of token order unless
+positional information is explicitly injected. The encoder architecture in
+Section~\ref{sec:encoder} introduced learned absolute position embeddings that suffer from a fundamental limitation: they assign each position an
+absolute representation, so the model must learn, through training data alone,
+that position 5 is close to position 6 and far from position 500. More
+critically, positions beyond the training sequence length are entirely
+out-of-distribution at inference time, causing sharp performance degradation
+when the model encounters longer sequences than it was trained on.
+ 
+Rotary Position Embeddings (RoPE)~\cite{su2024roformer} take a different
+approach. Rather than adding a positional signal to token embeddings, RoPE
+encodes position by \emph{rotating} the query and key vectors immediately
+before each attention dot product. The rotation is designed so that the dot
+product between a rotated query at position $m$ and a rotated key at position
+$n$ depends only on the \emph{relative offset} $m - n$, not on the absolute
+values of $m$ and $n$ themselves. Relative position is therefore encoded
+directly in the attention score, without requiring the model to infer it from
+absolute representations.
+ 
+\subsubsection*{The Rotation Mechanism}
+ 
+RoPE operates on pairs of dimensions. For a single pair $(x_{2i},\, x_{2i+1})$
+of a query or key vector at sequence position $m$, the rotation by angle
+$m\theta_i$ is the standard 2D rotation:
+ 
+\begin{equation}
+\mathbf{R}(m, \theta_i)
+\begin{pmatrix} x_{2i} \\ x_{2i+1} \end{pmatrix}
+=
+\begin{pmatrix}
+\cos(m\theta_i) & -\sin(m\theta_i) \\
+\sin(m\theta_i) &  \cos(m\theta_i)
+\end{pmatrix}
+\begin{pmatrix} x_{2i} \\ x_{2i+1} \end{pmatrix}
+\end{equation}
+ 
+A $d$-dimensional query or key vector is split into $d/2$ consecutive pairs,
+and each pair $i$ is rotated independently by its own frequency $\theta_i$.
+The full rotation matrix $\mathbf{R}_m$ acting on the entire vector is
+therefore block-diagonal, with each $2 \times 2$ block being the rotation
+matrix for pair $i$ at position $m$:
+ 
+\begin{equation}
+\mathbf{R}_m =
+\begin{pmatrix}
+\mathbf{R}(m,\theta_0) & & \\
+& \ddots & \\
+& & \mathbf{R}(m,\theta_{d/2-1})
+\end{pmatrix}
+\end{equation}
+ 
+The frequencies $\theta_i$ are \textbf{not learned}. They follow a fixed
+geometric schedule parameterised by a single base constant
+$\theta_{base}$ (commonly set to $10{,}000$):
+ 
+\begin{equation}
+\theta_i = \theta_{base}^{-2i/d}, \qquad i = 0, 1, \ldots, \tfrac{d}{2} - 1
+\end{equation}
+ 
+This produces a spectrum of rotation speeds. The first pair ($i=0$) rotates
+fastest, completing a full revolution in $2\pi / \theta_0 = 2\pi$ positions.
+The last pair ($i = d/2 - 1$) rotates extremely slowly, completing a
+revolution only after $\theta_{base}^{} \cdot 2\pi$ positions. Fast-rotating
+dimensions therefore encode fine-grained, short-range positional distinctions;
+slow-rotating dimensions encode coarse, long-range structure. 
+ 
+\subsubsection*{The Relative-Position Property}
+ 
+The key algebraic consequence of rotating queries and keys by the same
+block-diagonal family of matrices is that their dot product depends only on
+the relative offset. For a query at position $m$ and a key at position $n$:
+ 
+\begin{equation}
+\left(\mathbf{R}_m \mathbf{q}\right)^\top
+\left(\mathbf{R}_n \mathbf{k}\right)
+= \mathbf{q}^\top \mathbf{R}_m^\top \mathbf{R}_n \mathbf{k}
+= \mathbf{q}^\top \mathbf{R}_{n-m} \mathbf{k}
+\end{equation}
+ 
+where the last equality follows from the fact that rotation matrices compose
+additively in angle: $\mathbf{R}_m^\top \mathbf{R}_n = \mathbf{R}_{n-m}$.
+The result is a function of $n - m$ only. This means that two tokens
+separated by an offset of 10 produce the same positional contribution to the
+attention score regardless of whether they appear at positions $(1, 11)$ or
+$(500, 510)$. The model therefore learns positional relationships that
+generalise across absolute positions rather than memorising absolute-position
+statistics from training data.
+ 
+Because the encoding is applied to queries and keys rather than to the token
+embeddings, it does not interact with the feedforward sublayers and requires
+no additional parameters beyond the existing $\mathbf{W}^Q$ and $\mathbf{W}^K$
+projection matrices. The rotation is applied after projection but before the
+dot product, adding negligible compute.
+ 
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{images/rope.png}
+    \caption{Rotary Position Embeddings (RoPE). A $d$-dimensional query or
+    key vector is partitioned into $d/2$ consecutive pairs. Each pair $i$ is
+    rotated in its own 2D plane by angle $m\theta_i$, where $m$ is the token's
+    sequence position and $\theta_i = \theta_{base}^{-2i/d}$ is a fixed
+    frequency. Early pairs (small $i$, high $\theta_i$) rotate rapidly,
+    encoding fine-grained local position; later pairs (large $i$, low $\theta_i$)
+    rotate slowly, encoding long-range structure. Because rotation matrices
+    compose additively, the dot product of a rotated query at position $m$ with
+    a rotated key at position $n$ depends only on the offset $n - m$, giving
+    RoPE its relative-position property without any learned positional parameters.}
+    \label{fig:rope}
+\end{figure}
+ 
+
+ 
+\subsubsection*{Context Extension}
+ 
+Although the relative-position property gives RoPE better extrapolation
+behavior than absolute embeddings in principle, direct inference on sequences
+much longer than the training length still degrades in practice. The root cause
+is that the model's attention patterns are calibrated during training to the
+rotation angles it observed; at much longer offsets, the slow-rotating
+dimensions enter angular ranges they were never trained on, and the fast-rotating
+dimensions begin cycling through angles that repeat at training-scale offsets,
+creating ambiguity.
+ 
+Context extension addresses this by \emph{rescaling} the rotation frequencies
+at inference time. The core idea is to interpolate: rather than evaluating the
+rotation at position $m$, evaluate it at position $m / s$ for a scale factor
+$s > 1$, effectively compressing a longer sequence into the angular range the
+model was trained on. Naive uniform rescaling of all frequencies degrades
+quality because the fast-rotating dimensions, which encode short-range
+structure, are most sensitive to frequency changes. More refined approaches
+apply different rescaling factors to different frequency bands---rescaling the
+slow-rotating dimensions more aggressively, since these are the ones that
+encounter out-of-distribution angles at long range, while leaving the
+fast-rotating dimensions closer to their original frequencies. This selective
+rescaling has enabled models trained on sequences of $4{,}096$ tokens to
+operate effectively at $128{,}000$ tokens or more without full retraining on
+long-context data.
+ 
+RoPE has become the standard positional encoding for decoder-only language
+models, adopted in virtually every major open-weight model released since 2023.
+Its dominance reflects the combination of three properties that learned absolute embeddings do not provide:
+computational simplicity (no additional parameters, negligible overhead),
+exact relative-position encoding (the relative-position property holds exactly
+by construction, not approximately through training), and tractable context
+extension (frequency rescaling extends the effective context length without
+architectural changes).
+ 
+
+% ------------------------------------------------------------
+\subsection{Mixture of Experts (MoE)}
+% ------------------------------------------------------------
+
+A fundamental tension in language model design is that larger models
+generalise better and exhibit stronger capabilities, but larger models are also
+more expensive to run at inference time: every parameter is activated for every
+token. Mixture of Experts (MoE) (Figure \ref{fig:mixture_of_experts})  architectures dissolve this coupling by
+making the model's \emph{active} parameter count a design variable independent
+of its \emph{total} parameter count.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\textwidth]{images/flash_attn.png}
-    \caption{Flash Attention Algorithm}
+    \includegraphics[width=0.7\textwidth]{images/moe.png}
+    \caption{Mixture of Experts}
+    \label{fig:mixture_of_experts}
 \end{figure}
 
+The key idea is to replace the dense feedforward sublayer in each transformer
+block with a set of $E$ parallel expert networks, each with the same
+architecture as the original feedforward layer, together with a learned
+\emph{router} that selects which experts to activate for each input token.
+Only the top-$K$ experts (typically $K = 1$ or $K = 2$) are activated per
+token, so the computation per token scales with $K$ rather than $E$. The
+total number of parameters scales with $E$, enabling a much larger effective
+model capacity for a given computational budget.
+
+Formally, let $\mathbf{x}$ be the input to an MoE layer and let $f_i(\cdot)$
+denote expert $i$. The router computes a score for each expert:
+
+\begin{equation}
+s_i = \mathbf{w}_r^\top \mathbf{x}
+\end{equation}
+
+and the top-$K$ experts are selected by their scores. The layer output is a
+weighted sum over the selected experts:
+
+\begin{equation}
+\text{MoE}(\mathbf{x})
+= \sum_{i \in \text{Top-}K} \frac{e^{s_i}}{\sum_{j \in \text{Top-}K} e^{s_j}} f_i(\mathbf{x})
+\end{equation}
+
+Two conceptual advances have refined this picture further. The first concerns
+\textbf{expert granularity}. Standard MoE uses a small number of large
+experts. An alternative is to use many small experts---increasing $E$ while
+reducing each expert's hidden dimension proportionally, so that total parameter
+count and per-token FLOPs remain fixed. Fine-grained experts encourage stronger
+knowledge decomposition: each expert specialises in a narrower domain, and the
+router can activate a more precise combination of capabilities for each token.
+Alongside fine-grained routed experts, a small number of \emph{shared experts}
+are activated for every token regardless of routing, handling common linguistic
+patterns that appear across all contexts. This reduces redundancy among routed
+experts and allows them to specialise more aggressively.
+
+The second advance concerns \textbf{load balancing}. If the router consistently
+sends most tokens to a small subset of experts---a failure mode known as routing
+collapse---the computational advantage of MoE is lost: some experts are
+overloaded while most sit idle. Conventional solutions add an auxiliary
+loss to the training objective that penalises unequal expert utilisation.
+However, this loss interferes with the primary language modelling objective and
+can degrade model quality when weighted too heavily. An alternative approach
+introduces a small per-expert bias term that is updated dynamically based on
+observed load, without contributing to the gradient of the primary loss.
+Overloaded experts receive a bias that makes them slightly less likely to be
+selected; underloaded experts receive a bias in the opposite direction. Load
+balance is maintained throughout training with no sacrifice to model
+performance.
+
+Together, these developments have established MoE not as an experimental
+variant but as a mainstream architecture for frontier models: fine-grained
+expert decomposition improves specialisation; shared experts handle common
+knowledge; dynamic bias-based load balancing maintains efficiency without
+quality penalties.
+
+% ------------------------------------------------------------
+\subsection{Multimodal Architectural Innovations}
+% ------------------------------------------------------------
+
+The sections above describe innovations that apply within a single modality.
+As language models have been extended to process images, audio, and video
+alongside text, new architectural questions have arisen that do not have
+analogues in unimodal settings. This subsection traces the evolution of
+multimodal architectures, from early approaches that bridged separately
+pretrained vision and language components, to the emerging consensus around
+unified tokenization that treats all modalities as first-class inputs to a
+single autoregressive backbone.
+
+\subsubsection*{The Modality Bridging Problem}
+
+The patchification and projection described in Section~\ref{sec:vit} converts
+an image into a sequence of patch embeddings in $\mathbb{R}^h$, placing it in
+the same representational space as text token embeddings. This is the
+simplest possible bridge: the image embeddings are concatenated with the text
+token sequence and the combined sequence is processed by a standard decoder.
+While conceptually clean, simple concatenation has a significant cost: the
+number of visual tokens grows with image resolution. A $1024 \times 1024$
+image with patch size 16 produces $4{,}096$ patch tokens, which, appended to
+a text prompt, consumes a large portion of the model's context window before
+any text has been processed.
+
+This observation motivated a class of \emph{connector} architectures that
+compress the visual token sequence before it reaches the language model.
+
+\textbf{Query-based compression.} A small set of $Q$ learnable query
+vectors---independent of the image---attends to the patch embeddings via
+cross-attention to produce a fixed-size representation of $Q$ vectors,
+regardless of image resolution:
+
+\begin{equation}
+\mathbf{V}_{compressed} = \text{CrossAttention}(\mathbf{Q}_{learned},\,
+\mathbf{K}_{patches},\, \mathbf{V}_{patches})
+\end{equation}
+
+The $Q$ compressed tokens are then concatenated with the text sequence.
+Setting $Q \ll N_{patches}$ decouples the number of visual tokens consumed
+by the language model from image resolution, at the cost of potentially
+discarding fine-grained spatial detail. 
+
+\textbf{Cross-attention injection.} Rather than converting visual features
+into tokens, visual information is injected into the language model at every
+layer via additional cross-attention sublayers. At each transformer layer,
+text representations form the queries; patch embeddings form the keys and
+values. No visual tokens enter the text sequence at all; instead, the model
+develops its visual grounding gradually across layers. The trade-off is the opposite of query-based
+compression: all spatial detail is preserved in the keys and values, but the
+additional cross-attention sublayers increase per-layer compute and require
+new parameters to be trained.
+
+These approaches represent different points on a common trade-off curve
+between visual fidelity, context length consumed, and parameter efficiency.
+They dominated multimodal model design from 2022 through 2024.
+
+\subsubsection*{Unified Tokenization}
+
+The connector approaches above share a structural assumption: vision and
+language are processed by separate components that are then bridged. This
+assumption is increasingly being dissolved by \emph{unified tokenization},
+the approach toward which the field is converging as of 2025--2026.
+
+The central idea is to apply a \emph{discrete visual tokenizer} to images,
+converting them into sequences of integer indices drawn from a learned
+codebook---exactly analogous to how a text tokenizer converts a string into
+a sequence of token IDs. The language model then processes a single sequence
+of tokens, some drawn from the text vocabulary and some from the visual
+vocabulary, under a standard next-token prediction objective.
+
+Discretization is achieved via \emph{vector quantization}. A continuous patch
+embedding $\mathbf{z} \in \mathbb{R}^h$ is mapped to the nearest entry in a
+learned codebook $\mathcal{C} = \{\mathbf{e}_1, \ldots, \mathbf{e}_K\}$:
+
+\begin{equation}
+\hat{\mathbf{z}} = \mathbf{e}_{k^*}, \qquad
+k^* = \arg\min_k \|\mathbf{z} - \mathbf{e}_k\|_2
+\end{equation}
+
+The codebook is learned end-to-end using a combination of a commitment loss,
+which encourages the encoder output $\mathbf{z}$ to stay close to codebook
+entries, and a straight-through gradient estimator, which allows gradients to
+flow through the non-differentiable argmin operation during training:
+
+\begin{equation}
+\mathcal{L}_{VQ} = \|\mathbf{z} - \text{sg}[\hat{\mathbf{z}}]\|_2^2
+                 + \beta \|\text{sg}[\mathbf{z}] - \hat{\mathbf{z}}\|_2^2
+\end{equation}
+
+where $\text{sg}[\cdot]$ denotes the stop-gradient operator and $\beta$
+is a commitment cost weighting. The codebook index $k^*$ is the visual token;
+the model learns to associate these indices with semantic content through
+training on large image-text corpora.
+
+The unified vocabulary is then the union of the text vocabulary and the visual
+codebook: $\mathcal{V}_{unified} = \mathcal{V}_{text} \cup \mathcal{C}$. A
+mixed sequence of text and image tokens is processed autoregressively under the
+standard cross-entropy loss:
+
+\begin{equation}
+\mathcal{L} = -\sum_t \log p(z_t \mid z_{<t})
+\end{equation}
+
+where $z_t$ may be either a text token or a visual token. The model learns
+a single joint distribution over both vocabularies, enabling it to both
+understand and generate image content within the same autoregressive framework.
+
+The key advantage of unified tokenization over connector-based approaches is
+architectural simplicity: there is no separate vision encoder, no connector
+module, and no special-casing for visual inputs in the forward pass. The
+language model backbone is unchanged; only the input representation and output
+vocabulary are extended. This simplicity has practical consequences---training
+stability, scaling behavior, and deployment are all governed by the same
+principles as pure language models---and conceptual ones: the model treats
+perceiving an image and generating an image as symmetric operations over the
+same discrete token space.
+
+The principal cost of unified tokenization is lossy compression: the argmin
+quantization step is a bottleneck that discards information that does not fit
+the codebook. This introduces a fidelity ceiling that does not exist in
+connector-based approaches, where the patch embeddings are continuous and lossless.
+Research on larger codebooks, hierarchical quantization, and residual vector
+quantization is actively reducing this gap.
+
+\subsubsection*{Multimodal Positional Encoding}
+
+Extending positional encodings to multiple modalities introduces structure that
+has no analogue in the single-modality case. In a text sequence, position is
+one-dimensional: token $i$ comes before token $i+1$. In a multimodal sequence,
+position has additional structure: image patches have two-dimensional spatial
+coordinates, video frames have both spatial and temporal coordinates, and the
+relationship between a spoken word and the video frame it accompanies is a
+cross-modal temporal alignment.
+
+\textbf{Two-dimensional RoPE.} For image patches, the rotation angles in RoPE
+are computed from two position indices---row $r$ and column $c$---rather than
+one. The query and key vector subspaces are partitioned into two halves: one
+half is rotated according to the row position, the other according to the
+column position. The resulting dot product between a query at $(r_1, c_1)$ and
+a key at $(r_2, c_2)$ depends on the relative offsets $(r_1 - r_2)$ and
+$(c_1 - c_2)$ independently:
+
+\begin{equation}
+\left(\mathbf{R}_{r_1,c_1}\, \mathbf{q}\right)^\top
+\left(\mathbf{R}_{r_2,c_2}\, \mathbf{k}\right)
+= \mathbf{q}^\top \mathbf{R}_{r_1-r_2,\,c_1-c_2}\, \mathbf{k}
+\end{equation}
+
+This preserves the relative-position property of standard RoPE while
+encoding spatial layout, so the model can learn that the patch at row 5,
+column 3 is spatially related to the patch at row 6, column 3 in the same
+way regardless of where in the context window these patches appear.
+
+\textbf{Temporal RoPE.} For video, a third index---frame number $f$---is
+added. Each token's position triple $(r, c, f)$ generates a rotation that
+factorises across the three dimensions, so that spatial proximity within a
+frame and temporal proximity across frames are encoded independently and
+can both influence attention patterns.
+
+\textbf{Cross-modal alignment.} When text, image, and audio are interleaved in
+a single sequence, tokens from different modalities must be assigned position
+indices that reflect their temporal alignment. A spoken word and the video
+frame during which it is spoken receive the same temporal index $f$, so that
+the model's relative-position encoding places them close together in the
+temporal dimension regardless of their positions in the flattened token
+sequence. This time-aligned positional encoding enables the model to learn
+audio-visual correspondences---associating a spoken phoneme with the
+corresponding lip movement, or a sound event with its visual cause---as a
+natural consequence of position encoding rather than as a separately trained
+alignment objective.
+
+These extensions of RoPE to two-dimensional, temporal, and cross-modal
+settings are not separate innovations but a single coherent generalization: the
+rotation angle for any token is computed from its full position descriptor,
+which may include spatial, temporal, and modal coordinates depending on the
+application. The attention dot product then encodes relative position in all
+of these dimensions simultaneously, providing the model with a rich positional
+substrate on which to build multimodal representations.
 
 \section{Conclusion}
 
@@ -11437,6 +11957,15 @@ R.~Ronen, E.~Zheltonozhskii, C.~Baskin, T.~Glam, and A.~M.~Bronstein,
 ``Quadformer: Quadtree-based adaptive tokenization for vision transformers,''
 \textit{arXiv preprint}, 2023.
 
+\bibitem{shah2024flashattention3}
+Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao.
+\newblock FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision.
+\newblock In {\em Advances in Neural Information Processing Systems}, volume 37, 2024.
+
+\bibitem{deepseekai2024deepseekv2}
+DeepSeek-AI.
+\newblock DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model.
+\newblock {\em arXiv preprint arXiv:2405.04434}, 2024.
 
 \end{thebibliography}
 
