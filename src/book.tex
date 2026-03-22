@@ -2025,9 +2025,9 @@ written to and read from GPU high-bandwidth memory (HBM) at every step of the
 computation. For long sequences this memory traffic, not arithmetic, becomes
 the dominant cost.
 
-FlashAttention~\cite{dao2022flashattention} addressed this by recognising that
-the softmax normalisation over the full row can be computed \emph{online},
-without ever materialising the complete $N \times N$ matrix. As illustrated in
+FlashAttention~\cite{dao2022flashattention} addressed this by recognizing that
+the softmax normalization over the full row can be computed \emph{online},
+without ever materializing the complete $N \times N$ matrix. As illustrated in
 Figure~\ref{fig:flash_attn_algo}, the algorithm tiles the query and key-value
 matrices into blocks that fit in the GPU's fast on-chip memory (SRAM),
 computes attention block by block, and maintains running
@@ -2065,7 +2065,7 @@ from a few thousand tokens to hundreds of thousands in production models.
     \includegraphics[width=0.7\textwidth]{images/flash_attn.png}
     \caption{Flash Attention Algorithm. By tiling the attention computation
     into SRAM-resident blocks and maintaining online softmax statistics, the
-    algorithm avoids materialising the full $N \times N$ attention matrix in
+    algorithm avoids materializing the full $N \times N$ attention matrix in
     HBM, reducing memory usage from $O(N^2)$ to $O(N)$.}
     \label{fig:flash_attn_algo}
 \end{figure}
