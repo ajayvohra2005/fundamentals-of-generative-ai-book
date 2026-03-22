@@ -720,10 +720,12 @@ f(x_0) = (0.25)^2 = 0.0625
 This approximates the true answer of $0.5$ excellently. This numerical differentiation approach, while inefficient for training large models, provides intuition for what gradients measure: the rate of change of the function.
 
 \subsection{Chain Rule}
+\label{sec:chain-rule}
 
 The chain rule is fundamental to backpropagation in neural networks. If $f(x)$ is a scalar function of $x$, and $y = g(x)$ is another scalar function, and $h(y)$ is a scalar function of $y$, then:
 
 \begin{equation}
+\label{eq:chain-rule}
 \frac{dh(y)}{dx}\bigg|_{x_0} = \frac{dh(y)}{dy}\bigg|_{y_0} \cdot \frac{dy}{dx}\bigg|_{x_0}
 \end{equation}
 
@@ -1396,47 +1398,104 @@ The choice between these architectures involves fundamental trade-offs:
 
 The trend in recent years has strongly favored decoder-only architectures for large-scale language models. This reflects the recognition that with sufficient scale and appropriate training, causal language models can perform both understanding and generation tasks effectively, while providing simpler architectures and more efficient inference.
 
+% ============================================================
+% REWRITE: Transformer Encoder Architecture through MLP
+% Replaces the existing content from \section{Transformer Encoder Architecture}
+% through the end of \section{Multi-Layer Perceptron (Feedforward Network)}
+% ============================================================
+
 \section{Transformer Encoder Architecture}
+
+\subsection{The Transformer: A Brief Orientation}
+
+Before diving into the encoder's components, it is worth pausing to establish
+what a transformer is and why it matters. Prior approaches to sequence modeling
+processed tokens one at a time, accumulating information in a hidden state that
+was updated at each step. This sequential processing was a fundamental
+bottleneck: because each step depended on the previous one, training could not
+be parallelized across the sequence, and long-range dependencies were difficult
+to learn because information had to pass through many intermediate steps before
+influencing a distant position --- each additional step compounding the risk of
+gradients shrinking to nothing during backpropagation
+(see Equation~\ref{eq:chain-rule}).
+
+The transformer, introduced by Vaswani et al.\ in the landmark 2017 paper
+\textit{Attention Is All You Need}~\cite{vaswani2017attention}, replaced
+sequential processing entirely with a mechanism called \emph{self-attention},
+which allows every position in a sequence to directly attend to every other
+position in a single parallel operation. This has two consequences that
+together explain the transformer's dominance. First, training is fully
+parallelizable across sequence positions, which makes efficient use of modern
+hardware. Second, the path length between any two positions is constant
+regardless of how far apart they are in the sequence, making long-range
+dependencies no harder to learn than short-range ones.
+
+Every transformer layer combines two operations in sequence: self-attention,
+which aggregates information across positions, and a feedforward network (MLP),
+which transforms each position's representation independently. This pairing ---
+one operation that mixes information across positions, one that processes each
+position in isolation --- is repeated $N$ times as the signal passes through
+$N$ stacked layers. The encoder architecture described in this section
+instantiates this pattern for bidirectional sequence understanding.
 
 \subsection{High-Level Structure}
 \label{sec:encoder}
 
-The transformer encoder processes input sequences into contextualized representations. As shown in Figure \ref{fig:encoder_arch}, the architecture consists of:
+The transformer encoder processes input sequences into contextualized
+representations. As shown in Figure~\ref{fig:encoder_arch}, the architecture
+consists of:
 
 \begin{enumerate}
 \item \textbf{Input embedding layer:} Converts token IDs to dense vectors.
-\item \textbf{Position embedding layer:} Adds positional information to the unordered set of embeddings.
-\item \textbf{N stacked encoder layers:} Each applies self-attention and feedforward transformations.
-\item \textbf{Output embeddings:} Contextualized representations of each input token.
+\item \textbf{Position embedding layer:} Adds positional information to the
+      unordered set of embeddings.
+\item \textbf{$N$ stacked encoder layers:} Each applies self-attention and
+      feedforward transformations.
+\item \textbf{Output embeddings:} Contextualized representations of each input
+      token.
 \end{enumerate}
 
 \begin{figure}[htbp]
     \centering
-    % Placeholder: Use the image from PDF Page 4
     \includegraphics[width=0.9\textwidth]{images/transformer_encoder_arch.png}
-    \caption{The Transformer Encoder Architecture. Input tokens are converted to embeddings, summed with position embeddings, and passed through $N$ transformer layers.}
+    \caption{The Transformer Encoder Architecture. Input tokens are converted
+    to embeddings, summed with position embeddings, and passed through $N$
+    transformer layers.}
     \label{fig:encoder_arch}
 \end{figure}
 
-Let's denote the sequence length as $s$ and the hidden dimension as $h$. An input sequence of $s$ tokens is converted to a matrix of shape $(s, h)$ that flows through the network.
+We denote the sequence length as $s$ and the hidden dimension as $h$. An
+input sequence of $s$ tokens is converted to a matrix of shape $(s, h)$ that
+flows through the network.
 
 \subsection{Embeddings: From Tokens to Vectors}
 
-\textbf{Token Embeddings:} Each token in the vocabulary (typically 30,000-100,000 tokens) is associated with a learned embedding vector of dimension $h$ (commonly 768, 1024, or larger). The embedding layer is essentially a lookup table—a matrix $\mathbf{E}_{token}$ of shape (vocabulary\_size, $h$). Given input token IDs, we retrieve the corresponding rows:
+\textbf{Token Embeddings:} Each token in the vocabulary (typically
+30,000--100,000 tokens) is associated with a learned embedding vector of
+dimension $h$ (commonly 768, 1024, or larger). The embedding layer is
+essentially a lookup table --- a matrix $\mathbf{E}_{token}$ of shape
+$(\text{vocab\_size},\, h)$. Given input token IDs, we retrieve the
+corresponding rows:
 
 \begin{equation}
 \mathbf{X}_{token} = \mathbf{E}_{token}[\text{token\_ids}]
 \end{equation}
 
-This produces a matrix of shape $(s, h)$ where each row is the embedding of one token.
+This produces a matrix of shape $(s, h)$ where each row is the embedding of
+one token.
 
-\textbf{Position Embeddings:} Transformers have no inherent notion of sequence order—the self-attention mechanism treats the input as an unordered set. To inject positional information, we add position embeddings. Modern models often use learned position embeddings—a matrix $\mathbf{E}_{pos}$ of shape (max\_sequence\_length, $h$):
+\textbf{Position Embeddings:} Transformers have no inherent notion of sequence
+order --- the self-attention mechanism treats the input as an unordered set.
+To inject positional information, we add position embeddings. Modern models
+often use learned position embeddings --- a matrix $\mathbf{E}_{pos}$ of shape
+$(\text{max\_sequence\_length},\, h)$:
 
 \begin{equation}
 \mathbf{X}_{pos} = \mathbf{E}_{pos}[\text{position\_ids}]
 \end{equation}
 
-\textbf{Combined Input:} The final input to the encoder is the sum of token and position embeddings:
+\textbf{Combined Input:} The final input to the encoder is the sum of token
+and position embeddings:
 
 \begin{equation}
 \mathbf{X}_{input} = \mathbf{X}_{token} + \mathbf{X}_{pos}
@@ -1444,15 +1503,9 @@ This produces a matrix of shape $(s, h)$ where each row is the embedding of one 
 
 \subsection{Encoder Layer Structure}
 
-Each encoder layer consists of two sub-layers with residual connections and layer normalization, as illustrated in Figure \ref{fig:encoder_block_detail}:
-
-\begin{figure}[htbp]
-    \centering
-    % Placeholder: Use the detailed block diagram from PDF Page 6
-    \includegraphics[width=0.6\textwidth]{images/encoder_layer_detail.png}
-    \caption{Detailed view of a single Transformer Encoder layer, featuring Multi-head Self Attention followed by a Multi-layer Perceptron (MLP), with LayerNorm and residual connections.}
-    \label{fig:encoder_block_detail}
-\end{figure}
+Each encoder layer consists of two sub-layers, each wrapped with a residual
+connection and layer normalization, as illustrated in
+Figure~\ref{fig:encoder_block_detail}:
 
 \begin{enumerate}
 \item Multi-head self-attention
@@ -1460,6 +1513,15 @@ Each encoder layer consists of two sub-layers with residual connections and laye
 \item Multi-layer perceptron (MLP) / feedforward network
 \item Layer normalization with residual connection
 \end{enumerate}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.6\textwidth]{images/encoder_layer_detail.png}
+    \caption{Detailed view of a single Transformer Encoder layer, featuring
+    Multi-head Self Attention followed by a Multi-layer Perceptron (MLP),
+    with LayerNorm and residual connections.}
+    \label{fig:encoder_block_detail}
+\end{figure}
 
 Mathematically, for input $\mathbf{X}$:
 
@@ -1471,73 +1533,182 @@ Mathematically, for input $\mathbf{X}$:
 \mathbf{X}'' = \text{LayerNorm}(\mathbf{X}' + \text{MLP}(\mathbf{X}'))
 \end{equation}
 
-The residual connections (the ``$+$'' operations) allow gradients to flow directly through the network, enabling training of very deep models.
+The \textbf{residual connections} (the ``$+$'' operations) add the sublayer's
+input directly to its output before normalization. This allows gradients to
+flow directly through the network during training, bypassing the sublayer
+entirely if needed, and makes it possible to train very deep stacks of layers
+that would otherwise suffer from vanishing gradients owing to chain rule (Section~\ref{sec:chain-rule}).
 
+\subsubsection*{Layer Normalization}
+
+\textbf{Layer normalization (LayerNorm)}~\cite{ba2016layernorm} stabilizes the
+activations at each layer. As a $s \times h$ matrix  passes through $N$ stacked
+transformations, the scale of its activations can drift --- growing very large
+(causing gradient explosion) or collapsing toward zero (causing gradient
+vanishing). The vanishing gradient problem is a direct consequence of the chain
+rule (Equation~\ref{eq:chain-rule}): when gradients are multiplied through
+many layers with each factor $ < 1 $, it shrinks the gradients, eventually making
+it too small to update the early layers of the network. LayerNorm prevents this
+drift by normalizing each token's hidden representation across the $h$ feature
+dimensions to have zero mean and unit variance, then applying learned scale and
+shift parameters $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$:
+
+\begin{equation}
+\text{LayerNorm}(\mathbf{x}) =
+    \boldsymbol{\gamma} \odot
+    \frac{\mathbf{x} - \mu}{\sigma + \epsilon}
+    + \boldsymbol{\beta}
+\end{equation}
+
+where $\mu = \frac{1}{h}\sum_{j=1}^{h} x_j$ is the mean of the $h$ elements,
+$\sigma = \sqrt{\frac{1}{h}\sum_{j=1}^{h}(x_j - \mu)^2}$ is their standard
+deviation, $\epsilon$ is a small constant for numerical stability, and
+$\odot$ denotes elementwise multiplication. Crucially, this normalization
+operates on each token's representation independently --- the statistics
+$\mu$ and $\sigma$ are computed over the $h$ features of a single token,
+not across the batch or across sequence positions. This makes LayerNorm
+invariant to batch size and sequence length, which are both variable in
+language model training.
+
+The learned parameters $\boldsymbol{\gamma}$ and $\boldsymbol{\beta}$, both
+of shape $(h,)$, allow the model to restore any scale and shift that is
+useful after normalization --- LayerNorm does not force the representation into
+a fixed range, it simply removes uncontrolled drift. Note that in the equations
+above, LayerNorm is applied \emph{after} the residual addition (post-norm).
+Modern large language models typically apply it \emph{before} the sublayer
+(pre-norm), which further improves training stability at scale and is the
+convention used in the decoder architectures described later in this chapter.
+
+% ============================================================
 \section{Multi-Head Self-Attention: The Core Mechanism}
+% ============================================================
 
 \subsection{Attention Intuition}
 
-Self-attention allows each position in a sequence to gather information from all other positions. The mechanism computes how much each position should ``attend to'' every other position, then uses these attention weights to create a weighted combination of information.
+Self-attention is the operation that distinguishes transformers from all
+prior sequence models. Rather than passing information from one token to
+another through a chain of sequential steps, self-attention allows every
+position to directly compare itself to every other position and gather
+information from whichever positions are most relevant --- in a single
+parallel operation over the entire sequence.
 
-The attention mechanism uses three learned transformations:
+The mechanism is built around three learned linear projections of the input,
+named for their roles in an information retrieval analogy:
+
 \begin{itemize}
 \item \textbf{Query (Q):} What am I looking for?
 \item \textbf{Key (K):} What do I offer?
 \item \textbf{Value (V):} What information do I contain?
 \end{itemize}
 
+Each token projects itself into all three roles simultaneously. The attention
+weight between two tokens is computed as the dot product of one token's query
+vector with the other's key vector --- a measure of how relevant the second
+token is to the first. These weights are then used to form a weighted sum of
+value vectors, producing an output that blends information from across the
+sequence in proportion to relevance.
+
 \subsection{Multi-Head Architecture}
 \label{sec:multi-head-attention}
 
-Rather than using a single attention mechanism, transformers use multiple attention heads in parallel. As shown in Figure \ref{fig:multi_head_attention}, the input is split across $a$ heads of dimension $d$, processed independently, and then concatenated such that $ad = h$.
+Rather than computing a single attention function over the full hidden
+dimension, transformers use \emph{multiple attention heads} in parallel.
+As shown in Figure~\ref{fig:multi_head_attention}, the hidden dimension $h$ is
+split across $n_{heads}$ heads, each of per-head dimension $d_h$, such that
+$n_{heads} \cdot d_h = h$. Each head computes attention independently,
+allowing different heads to specialize in different types of relationships:
+one head might track syntactic dependencies, another semantic similarity,
+another coreference, and so on.
 
 \begin{figure}[htbp]
     \centering
-    % Placeholder: Use the attention diagram from PDF Page 7
     \includegraphics[width=0.9\textwidth]{images/multi_head_attention.png}
-    \caption{Multi-head Self Attention mechanism. Inputs are projected into Queries (Q), Keys (K), and Values (V). Scaled Dot-Product Attention is applied in parallel heads.}
+    \caption{Multi-head Self Attention mechanism. Inputs are projected into
+    Queries (Q), Keys (K), and Values (V). Scaled Dot-Product Attention is
+    applied in parallel across heads and the results are concatenated.}
     \label{fig:multi_head_attention}
 \end{figure}
 
-For each head $i$:
+For each head $i$, the input $\mathbf{X} \in \mathbb{R}^{s \times h}$ is
+projected into queries, keys, and values of dimension $d_h$:
 
 \begin{equation}
-\text{head}_i = \text{Attention}(\mathbf{X}\mathbf{W}_i^Q, \mathbf{X}\mathbf{W}_i^K, \mathbf{X}\mathbf{W}_i^V)
+\text{head}_i =
+    \text{Attention}(\mathbf{X}\mathbf{W}_i^Q,\;
+                     \mathbf{X}\mathbf{W}_i^K,\;
+                     \mathbf{X}\mathbf{W}_i^V)
 \end{equation}
 
-The attention computation within each head is:
+where $\mathbf{W}_i^Q, \mathbf{W}_i^K, \mathbf{W}_i^V \in
+\mathbb{R}^{h \times d_h}$ are learned projection matrices specific to head
+$i$. The attention computation within each head is scaled dot-product
+attention:
 
 \begin{equation}
-\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V}) = \text{softmax}\left(\frac{\mathbf{Q}\mathbf{K}^T}{\sqrt{d_k}}\right) \mathbf{V}
+\text{Attention}(\mathbf{Q}, \mathbf{K}, \mathbf{V})
+    = \text{softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^\top}{\sqrt{d_h}}\right)
+      \mathbf{V}
 \end{equation}
 
-The outputs from all heads (each of shape $(s, d_k)$) are concatenated and projected:
+The dot products $\mathbf{Q}\mathbf{K}^\top$ produce an $(s \times s)$ matrix
+of raw attention scores --- one score for every pair of positions. Dividing by
+$\sqrt{d_h}$ prevents the dot products from growing large in magnitude as
+$d_h$ increases, which would push the softmax into regions of very small
+gradients. Softmax then converts the scores into a probability distribution
+over positions, and the weighted sum over $\mathbf{V}$ produces the attended
+output for each position.
+
+The outputs from all heads (each of shape $(s, d_h)$) are concatenated along
+the feature dimension and projected back to $h$:
 
 \begin{equation}
-\text{MultiHead}(\mathbf{X}) = \text{Concat}(\text{head}_1, \ldots, \text{head}_{n_{heads}}) \mathbf{W}^O
+\text{MultiHead}(\mathbf{X})
+    = \text{Concat}(\text{head}_1, \ldots, \text{head}_{n_{heads}})\,
+      \mathbf{W}^O
 \end{equation}
 
-\textbf{Why Multiple Heads?} Different heads can learn to attend to different types of relationships: syntactic structure, semantic similarity, long-range dependencies, etc.
+where $\mathbf{W}^O \in \mathbb{R}^{h \times h}$ is a learned output
+projection. The concatenation restores the full hidden dimension $h$ before
+the result is passed to the residual connection and LayerNorm.
 
+% ============================================================
 \section{Multi-Layer Perceptron (Feedforward Network)}
+% ============================================================
 
-After self-attention, each encoder layer applies a position-wise feedforward network. As depicted in Figure \ref{fig:mlp_structure}, this MLP processes each position independently.
+After self-attention aggregates information \emph{across} positions, each
+encoder layer applies a position-wise feedforward network that transforms
+each position's representation \emph{independently}. These two operations are
+complementary: attention decides what information to gather from the sequence;
+the MLP decides what to do with it at each position. As depicted in
+Figure~\ref{fig:mlp_structure}, the MLP processes each of the $s$ positions
+with the same learned weights but with no interaction between positions.
 
 \begin{figure}[htbp]
     \centering
-    % Placeholder: Use the MLP diagram from PDF Page 8
     \includegraphics[width=0.8\textwidth]{images/mlp_structure.png}
-    \caption{The Multi-layer Perceptron (MLP) block. It projects the input to a higher dimension ($4h$), applies a GeLU activation, and projects back to the original dimension ($h$).}
+    \caption{The Multi-layer Perceptron (MLP) block. It projects the input to
+    a higher dimension ($4h$), applies a GeLU activation, and projects back to
+    the original dimension ($h$).}
     \label{fig:mlp_structure}
 \end{figure}
 
-The structure consists of two linear transformations with a nonlinearity:
+The MLP consists of two linear transformations with a nonlinear activation
+in between:
 
 \begin{equation}
-\text{MLP}(\mathbf{Z}) = \text{GeLU}(\mathbf{Z}\mathbf{W}^1) \mathbf{W}^2
+\text{MLP}(\mathbf{Z}) = \text{GeLU}(\mathbf{Z}\mathbf{W}^1)\, \mathbf{W}^2
 \end{equation}
 
-where $\mathbf{W}^1$ expands the dimension by 4× and $\mathbf{W}^2$ projects it back. The expansion provides capacity for the MLP to learn complex transformations, accounting for about two-thirds of the model's parameters.
+where $\mathbf{W}^1 \in \mathbb{R}^{h \times 4h}$ expands each position's
+representation to an intermediate dimension of $4h$, and
+$\mathbf{W}^2 \in \mathbb{R}^{4h \times h}$ projects it back to $h$.
+The $4\times$ expansion provides the capacity for the MLP to learn complex
+nonlinear transformations of each token's representation. The GeLU
+(Gaussian Error Linear Unit) activation introduces the nonlinearity; without
+it the two linear layers would collapse into a single linear transformation
+and the expansion would provide no additional expressive power. The MLP
+accounts for roughly two-thirds of a transformer layer's parameters, with
+the attention projection matrices accounting for the remaining third.
 
 
 \section{Pre-training Encoder Models: Masked Language Modeling}
@@ -12029,6 +12200,12 @@ Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri D
 DeepSeek-AI.
 \newblock DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model.
 \newblock {\em arXiv preprint arXiv:2405.04434}, 2024.
+
+
+\bibitem{ba2016layernorm}
+Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E. Hinton.
+\textit{Layer Normalization}.
+arXiv preprint arXiv:1607.06450, 2016.
 
 \end{thebibliography}
 
