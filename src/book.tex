@@ -106,156 +106,504 @@ For permission requests or inquiries, please contact: \\
 
 \section{Introduction}
 
-Generative Artificial Intelligence (GenAI) represents one of the most transformative technological developments of the 21st century. Unlike traditional AI systems that focus on analyzing and classifying existing data, generative AI creates new content—text, images, code, music, and more—that often rivals human creativity. To understand how we arrived at this remarkable capability, we must trace the evolution of artificial intelligence from its theoretical foundations to the breakthrough transformer architectures that power modern large language models.
+Generative Artificial Intelligence represents one of the most transformative
+technological developments of the twenty-first century. Unlike traditional AI
+systems that analyze and classify existing data, generative models create new
+content --- text, images, code, music, and more --- that can be fluent,
+coherent, and sometimes indistinguishable from human-produced work. To
+understand how we arrived at this capability, we must trace the evolution of
+artificial intelligence from its theoretical foundations in the 1940s to the
+transformer architectures that power modern large language models.
 
-This chapter explores the key research milestones that paved the way for today's generative AI systems. Each breakthrough built upon previous work, gradually expanding our understanding of how machines can learn, represent knowledge, and ultimately generate novel content. From the earliest mathematical models of neurons to the attention mechanisms that revolutionized natural language processing, this historical journey reveals both the persistence of fundamental ideas and the explosive impact of recent innovations.
+This chapter follows the key research milestones that paved the way for
+today's generative AI systems. Each breakthrough built upon previous work,
+gradually expanding our understanding of how machines can learn, represent
+knowledge, and ultimately generate novel content. From the earliest
+mathematical models of neurons to the attention mechanisms that revolutionized
+natural language processing, this historical journey reveals both the
+persistence of fundamental ideas and the explosive impact of recent
+innovations.
 
-This chapter refers to several foundational mathematical formulas that define the key milestones in this historical journey. If you are not mathematically inclined, please feel free to skim the formulas; we  break down this math in more detail in the following chapter.
+Several foundational equations appear in this chapter. If you are not
+mathematically inclined, feel free to skim them; each equation is accompanied
+by a figure and plain-language explanation, and we develop the underlying
+mathematics in detail in the chapters that follow.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{images/ai_timeline.png}
+    \caption{Key milestones in the history of neural networks and generative
+    AI, from the McCulloch-Pitts neuron (1943) to the transformer revolution
+    (2017) and the Nobel Prize recognition of the field (2024). Each milestone
+    is discussed in this chapter.}
+    \label{fig:ai_timeline}
+\end{figure}
 
 \section{The Foundations: Early Neural Network Theory}
 
 \subsection{The McCulloch-Pitts Neuron (1943)}
+\label{sec:mcp}
 
-The conceptual journey toward generative AI began in 1943 with Warren McCulloch and Walter Pitts' seminal paper \cite{mcculloch1943logical}, ``A Logical Calculus of the Ideas Immanent in Nervous Activity.'' This work established the first mathematical model of a biological neuron, laying the theoretical groundwork for all neural networks that would follow.
+The conceptual journey toward generative AI began in 1943 with Warren
+McCulloch and Walter Pitts' seminal paper~\cite{mcculloch1943logical},
+``A Logical Calculus of the Ideas Immanent in Nervous Activity.'' This work
+established the first mathematical model of a biological neuron, laying the
+theoretical groundwork for all neural networks that would follow.
 
-McCulloch, a neuroscientist, and Pitts, a logician, proposed that neurons could be modeled as binary threshold units. Their artificial neuron receives multiple binary inputs, computes a weighted sum, and produces a binary output based on whether this sum exceeds a threshold. Mathematically, this can be expressed as:
+\textbf{The researchers behind the paper} were as unlikely a pair as the
+field has produced. Warren McCulloch was a gregarious, bearded psychiatrist
+and neuroscientist at the University of Illinois at Chicago, already in his forties and
+well established in academic circles. He had spent years trying to express the
+logic of neural activity in mathematical terms but lacked the formal tools to
+do so. Walter Pitts was seventeen years old, a self-taught mathematical
+prodigy who had run away from an abusive home in Detroit, taught himself
+Greek and Latin to read Bertrand Russell in the original, and written to
+Russell directly to point out errors in \textit{Principia Mathematica} ---
+receiving a serious reply. He had no formal academic affiliation, no degree,
+and no permanent address; McCulloch found him essentially living on the
+streets of Chicago and invited him into his home and laboratory. Their
+collaboration became legendary in the early cybernetics community, and Pitts
+was considered by many of their contemporaries --- including Norbert Wiener
+and John von Neumann --- to be among the most brilliant logicians alive.
+The paper they produced together changed the course of computing.
+
+McCulloch and Pitts proposed that neurons could be modeled as binary
+threshold units: each artificial neuron receives multiple inputs, computes a
+weighted sum, and produces a binary output based on whether that sum exceeds
+a threshold.
 
 \begin{equation}
+\label{eq:mcp}
 y = \begin{cases}
-1 & \text{if } \sum_{i=1}^{n} w_i x_i \geq \theta \\
+1 & \text{if } \displaystyle\sum_{i=1}^{n} w_i x_i \geq \theta \\[6pt]
 0 & \text{otherwise}
 \end{cases}
 \end{equation}
 
-where $x_i$ are the input signals, $w_i$ are the synaptic weights, and $\theta$ is the threshold value.
+where $x_i$ are the input signals, $w_i$ are the synaptic weights, and
+$\theta$ is the threshold value. Figure~\ref{fig:mcp_neuron} shows this
+mechanism visually.
 
-The profound insight of this work was demonstrating that networks of such simplified neurons could, in principle, compute any logical function. McCulloch and Pitts showed that these networks were Turing complete—they could perform any computation that a digital computer could perform. This established a crucial link between neural biology, logic, and computation.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.80\textwidth]{images/mcp_neuron.png}
+    \caption{The McCulloch-Pitts neuron. Multiple binary inputs $x_1, \ldots,
+    x_n$ are multiplied by weights $w_1, \ldots, w_n$ and summed. If the
+    weighted sum meets or exceeds the threshold $\theta$, the neuron fires
+    (output 1); otherwise it is silent (output 0). The weights were fixed by
+    hand in the original model --- the crucial innovation of \emph{learning}
+    the weights would come fifteen years later with the perceptron.}
+    \label{fig:mcp_neuron}
+\end{figure}
 
-However, the McCulloch-Pitts model had significant limitations. The weights were manually set rather than learned, and the neurons used hard thresholds rather than smooth activation functions. Despite these constraints, the model proved that neural-like computation was theoretically viable and planted the seed for adaptive learning systems.
+The profound insight of this work was demonstrating that networks of such
+simplified neurons could, in principle, compute any logical function.
+McCulloch and Pitts showed that these networks were Turing complete --- they
+could perform any computation that a digital computer could perform. This
+established a crucial link between neural biology, logic, and computation that
+would inspire researchers for decades.
+
+The model had important limitations: weights were set by hand rather than
+learned, and the hard threshold produced binary outputs rather than graded
+responses. Despite these constraints, it proved that neural-like computation
+was theoretically viable and planted the seed for adaptive learning systems.
+
+Tragically, Walter Pitts's story does not end triumphantly. In the late
+1950s, a personal falling-out with Norbert Wiener --- rooted partly in
+interpersonal conflicts and partly in the politics of the early cybernetics
+movement --- left Pitts isolated and deeply depressed. He withdrew from
+research, began drinking heavily, and burned much of his unpublished work.
+He died in 1969 at the age of 46, largely forgotten by the mainstream
+scientific community, on the same year that Minsky and Papert published
+their famous critique of the very field he had helped to create. The
+foundational paper he co-authored at seventeen remained one of the most cited
+in the history of neuroscience.
 
 \subsection{The Perceptron: Learning Emerges (1958)}
+\label{sec:perceptron}
 
-Fifteen years after the McCulloch-Pitts neuron, Frank Rosenblatt introduced a revolutionary advance: a neural network that could learn from examples. His 1958 paper \cite{rosenblatt1958perceptron}, ``The Perceptron: A Probabilistic Model for Information Storage and Organization in the Brain,'' described both a theoretical model and a physical machine capable of pattern recognition.
+Fifteen years after the McCulloch-Pitts neuron, Frank Rosenblatt introduced
+a revolutionary advance: a neural network that could \emph{learn} from
+examples. His 1958 paper~\cite{rosenblatt1958perceptron}, ``The Perceptron:
+A Probabilistic Model for Information Storage and Organization in the Brain,''
+described both a theoretical model and a physical machine capable of pattern
+recognition.
 
-The perceptron built upon the McCulloch-Pitts neuron but added a critical innovation—a learning algorithm. Rosenblatt's perceptron could adjust its weights based on training examples, gradually improving its ability to classify patterns. The learning rule was elegantly simple:
+The perceptron built upon the McCulloch-Pitts neuron but added a critical
+innovation --- a learning algorithm that adjusted weights based on training
+examples, gradually improving its ability to classify patterns:
 
 \begin{equation}
-w_i^{(new)} = w_i^{(old)} + \eta (t - y) x_i
+\label{eq:perceptron}
+w_i^{(new)} = w_i^{(old)} + \eta\, (t - y)\, x_i
 \end{equation}
 
-where $\eta$ is the learning rate, $t$ is the target (correct) output, and $y$ is the actual output produced by the perceptron.
+where $\eta$ is the learning rate, $t$ is the correct target output, and
+$y$ is the actual output. This rule embodies a principle that persists in
+modern deep learning: when the model makes a mistake, weights are adjusted in
+proportion to the error, moving the decision boundary toward correct
+classification. Figure~\ref{fig:perceptron_learning} illustrates how this
+boundary shifts through training.
 
-This rule embodies a fundamental principle that persists in modern deep learning: learning from errors. When the perceptron makes a mistake, the weights are adjusted in proportion to the error, moving the decision boundary toward correct classification.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/perceptron_learning.png}
+    \caption{The perceptron learning rule in action. Left: before training,
+    the decision boundary (dashed line) misclassifies several examples.
+    Right: after applying the weight update rule across multiple examples,
+    the boundary has shifted to correctly separate the two classes. The
+    perceptron convergence theorem guarantees this process terminates for
+    any linearly separable dataset.}
+    \label{fig:perceptron_learning}
+\end{figure}
 
-Rosenblatt's physical implementation, the Mark I Perceptron, was built in 1958 and could recognize simple geometric shapes. It consisted of 400 photocells connected to randomly wired units with adjustable weights. This demonstration of machine learning captivated both the scientific community and popular imagination, with media reports suggesting that machines might soon rival human intelligence.
-
-The perceptron learning algorithm came with an important theoretical guarantee: for linearly separable problems, the algorithm would converge to a solution in finite time. This convergence theorem provided mathematical confidence in the learning process and suggested broad applicability.
+Rosenblatt's physical implementation, the Mark I Perceptron (1958), was
+built at Cornell and could recognize simple geometric shapes using 400
+photocells connected to randomly wired units with adjustable potentiometers.
+The perceptron learning theorem provided a mathematical guarantee: for any
+linearly separable problem, the algorithm converges to a correct solution in
+finite time. This theoretical confidence attracted wide interest and
+significant optimism.
 
 \subsection{The First AI Winter: Perceptrons Criticized (1969)}
+\label{sec:ai_winter}
 
-The optimism surrounding perceptrons faced a severe challenge in 1969 when Marvin Minsky and Seymour Papert published their book \cite{minsky1969perceptrons} ``Perceptrons.'' Through rigorous mathematical analysis, they demonstrated fundamental limitations of single-layer perceptrons.
+The optimism surrounding perceptrons faced a severe challenge in 1969 when
+Marvin Minsky and Seymour Papert published ``Perceptrons''~\cite{minsky1969perceptrons}.
+Through rigorous mathematical analysis, they demonstrated that a single-layer
+perceptron cannot solve the XOR problem --- a simple logical function where
+the output is true only when the inputs differ. XOR is not linearly separable:
+no single straight line can divide the positive and negative examples in the
+input space.
 
-Most famously, Minsky and Papert proved that a single-layer perceptron cannot solve the XOR (exclusive OR) problem—a simple logical function where the output is true when the inputs differ. The XOR function is not linearly separable, meaning no single straight line can separate the positive and negative examples in the input space.
+More broadly, Minsky and Papert showed that single-layer perceptrons could
+only classify patterns that are linearly separable, excluding many real-world
+problems. While they acknowledged that multi-layer networks might overcome
+these limitations, they were pessimistic about the prospects of finding
+effective training methods for such networks.
 
-More broadly, Minsky and Papert showed that single-layer perceptrons could only classify patterns that are linearly separable. This limitation excluded many important problems, from recognizing complex patterns to solving multi-class classification tasks with intricate decision boundaries.
-
-While Minsky and Papert acknowledged that multi-layer networks might overcome these limitations, they were pessimistic about finding effective training methods for such networks. Their book's impact was profound and, in retrospect, perhaps overly dampening. Funding for neural network research dried up, ushering in what became known as the first ``AI Winter''—a period of reduced interest and investment that lasted through the 1970s.
-
-In hindsight, the critique was technically correct but incomplete. The limitations applied specifically to single-layer networks, and solutions existed but had not yet been fully developed. The field needed both theoretical advances and computational power that would not arrive until the 1980s.
+The critique was technically correct, but it was also incomplete: the
+limitations applied only to \emph{single-layer} networks, and the problem
+would prove solvable once researchers discovered how to train deeper
+architectures. But that discovery was still seventeen years away. Funding
+for neural network research dried up, ushering in the first ``AI Winter'' ---
+a period of reduced interest and investment that lasted through the 1970s.
 
 \section{The Renaissance: Backpropagation and Deep Learning}
 
 \subsection{Backpropagation: Training Deep Networks (1986)}
+\label{sec:backprop}
 
-The neural network renaissance began in earnest with the rediscovery and popularization of the backpropagation algorithm. While similar ideas had appeared earlier, the 1986 paper \cite{rumelhart1986learning} ``Learning representations by back-propagating errors'' by David Rumelhart, Geoffrey Hinton, and Ronald Williams brought backpropagation to widespread attention and demonstrated its power.
+The neural network renaissance began in earnest with the 1986 paper
+\cite{rumelhart1986learning} ``Learning Representations by Back-propagating
+Errors'' by David Rumelhart, Geoffrey Hinton, and Ronald Williams.
+Backpropagation solved the problem Minsky and Papert had identified: how to
+train neural networks with multiple layers.
 
-Backpropagation solved the critical problem that Minsky and Papert had identified: how to train multi-layer neural networks. The algorithm extends gradient descent to networks with hidden layers, computing how each weight contributes to the overall error and adjusting weights accordingly.
-
-The key insight involves the chain rule from calculus. For a network with layers, the error signal propagates backward from the output layer through each hidden layer, with each layer receiving a gradient signal proportional to its contribution to the final error:
+The algorithm extends gradient descent to networks with hidden layers by
+computing, for each weight, how much that weight contributed to the overall
+error. The key insight is the chain rule of calculus (developed in detail in
+Chapter~2): because the output of each layer feeds into the next, the error
+signal can be decomposed into a product of local gradients and propagated
+backward through the network, layer by layer:
 
 \begin{equation}
-\frac{\partial E}{\partial w_{ij}} = \frac{\partial E}{\partial y_j} \cdot \frac{\partial y_j}{\partial net_j} \cdot \frac{\partial net_j}{\partial w_{ij}}
+\label{eq:backprop}
+\frac{\partial E}{\partial w_{ij}}
+    = \frac{\partial E}{\partial y_j}
+      \cdot \frac{\partial y_j}{\partial \text{net}_j}
+      \cdot \frac{\partial \text{net}_j}{\partial w_{ij}}
 \end{equation}
 
-where $E$ is the error, $y_j$ is the output of neuron $j$, $net_j$ is its weighted input, and $w_{ij}$ is the weight from neuron $i$ to neuron $j$.
+where $E$ is the total error, $y_j$ is the output of neuron $j$,
+$\text{net}_j$ is its weighted input sum, and $w_{ij}$ is the weight
+connecting neuron $i$ to neuron $j$. Each factor in this product is a
+local quantity that can be computed from information already available at
+that layer. Figure~\ref{fig:backprop} shows how the error signal flows
+backward through a network.
 
-This decomposition allows efficient computation of gradients for all weights in the network, making it feasible to train networks with multiple hidden layers. The algorithm's elegance lies in its systematic approach: compute the error at the output, then propagate this error backward through the network, layer by layer, calculating how much each weight should change.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/backprop.png}
+    \caption{Backpropagation in a three-layer network. During the forward
+    pass (left to right), inputs produce a prediction. During the backward
+    pass (right to left), the difference between the prediction and the
+    correct answer --- the error $E$ --- is propagated back through each
+    layer. Each weight receives a gradient signal telling it how much to
+    change, computed via the chain rule. Layers closer to the output receive
+    the signal first; layers closer to the input receive a progressively
+    transformed version of it.}
+    \label{fig:backprop}
+\end{figure}
 
-Rumelhart, Hinton, and Williams demonstrated that networks trained with backpropagation could learn internal representations—patterns in the hidden layers that were not explicitly taught but emerged from the learning process. These learned representations could capture hierarchical features, with early layers learning simple patterns and deeper layers combining them into complex concepts.
+Rumelhart, Hinton, and Williams demonstrated that networks trained with
+backpropagation could learn internal representations --- patterns in the
+hidden layers that were not explicitly taught but emerged from the training
+process. These learned representations could capture hierarchical features,
+with early layers learning simple patterns and deeper layers combining them
+into complex concepts.
 
-The impact was immediate and profound. Backpropagation showed that multi-layer networks could learn XOR and other non-linearly separable problems. It enabled neural networks to tackle real-world problems in speech recognition, pattern classification, and early natural language processing. The theoretical barrier identified by Minsky and Papert had been overcome.
+The impact was immediate. Backpropagation showed that multi-layer networks
+could solve XOR and other non-linearly separable problems. It enabled neural
+networks to tackle real-world tasks in speech recognition and pattern
+classification, and it overcame the theoretical barrier that Minsky and
+Papert's critique had erected. The approach of learning hierarchical
+representations through gradient descent remains the foundation of deep
+learning today.
+
+\textbf{Nobel Prize recognition.} In October 2024, the Nobel Prize in Physics
+was awarded to John Hopfield and Geoffrey Hinton for foundational work on
+neural networks that enabled machine learning. Hopfield, a physicist at
+Princeton, had in 1982 described a neural network model --- now known as the
+Hopfield network~\cite{hopfield1982neural} --- that could store and retrieve
+memories by minimizing an energy function, drawing a direct analogy between
+neural networks and the physics of spin glasses. Hinton, who appears in this
+chapter as a co-inventor of backpropagation, extended this line of work with
+the Boltzmann machine and later became one of the most influential figures in
+modern deep learning. The Nobel Committee cited their work as providing
+``the physical tools that helped build powerful machine learning.'' The award
+to a physicist and a computer scientist for work on neural networks reflects
+how deeply these ideas have penetrated across scientific disciplines, and it
+represents a formal recognition that the mathematical and physical principles
+underlying modern AI have genuine scientific significance --- not merely
+engineering utility.
 
 \section{The Modern Era: Deep Learning Revolution}
 
-\subsection{ImageNet and Convolutional Networks (2012)}
+\subsection{Convolutional Networks and the ImageNet Moment (2012)}
+\label{sec:imagenet}
 
-Despite backpropagation's theoretical power, neural networks struggled to compete with other machine learning methods through the 1990s and 2000s. Networks were difficult to train, prone to overfitting, and often performed worse than simpler methods like support vector machines. This changed dramatically in 2012 with the ImageNet moment.
+Despite backpropagation's theoretical power, neural networks struggled to
+compete with other machine learning methods through the 1990s and 2000s.
+Networks were difficult to train, prone to memorizing training data, and
+often outperformed by simpler statistical methods. This changed dramatically
+in 2012.
 
-The paper \cite{krizhevsky2012imagenet} ``ImageNet Classification with Deep Convolutional Neural Networks'' by Alex Krizhevsky, Ilya Sutskever, and Geoffrey Hinton presented AlexNet, a deep convolutional neural network that won the ImageNet Large Scale Visual Recognition Challenge by a massive margin. Where previous winners achieved around 26\% error rates, AlexNet achieved 16\%—a revolutionary improvement.
+The paper~\cite{krizhevsky2012imagenet} ``ImageNet Classification with Deep
+Convolutional Neural Networks'' by Alex Krizhevsky, Ilya Sutskever, and
+Geoffrey Hinton presented a deep convolutional neural network that won the
+ImageNet image recognition challenge by a margin that shocked the field:
+where the previous year's winner had achieved around 26\% error, this
+network achieved 16\%. The gap was large enough that it immediately
+redirected the attention of the entire computer vision community.
 
-AlexNet's architecture combined several key innovations:
-
-\textbf{Convolutional Layers:} Rather than connecting every neuron to every input pixel, convolutional layers use small, learnable filters that slide across the image. This design captures spatial relationships and dramatically reduces the number of parameters. A convolutional operation can be expressed as:
-
-\begin{equation}
-(f * g)[m,n] = \sum_{i=-\infty}^{\infty} \sum_{j=-\infty}^{\infty} f[i,j] \cdot g[m-i, n-j]
-\end{equation}
-
-where $f$ is the input image and $g$ is the filter kernel.
-
-\textbf{ReLU Activation:} Instead of traditional sigmoid or tanh functions, AlexNet used Rectified Linear Units (ReLU), defined as $f(x) = \max(0, x)$. This simple function accelerated training by avoiding vanishing gradients and introducing beneficial sparsity.
-
-\textbf{Dropout Regularization:} During training, random neurons were temporarily ignored, preventing overfitting by ensuring the network couldn't rely too heavily on any single neuron.
-
-\textbf{GPU Training:} AlexNet leveraged GPU parallel processing to train on massive datasets, reducing training time from weeks to days.
-
-The ImageNet breakthrough proved that deep neural networks could exceed human-level performance on complex perceptual tasks when given sufficient data and computation. This catalyzed the deep learning revolution, with organizations worldwide investing in neural network research and applications.
-
-Crucially for generative AI, the success demonstrated that deep networks could learn hierarchical representations of complex data. Early layers in AlexNet learned edge detectors, middle layers learned texture and pattern detectors, and deep layers learned object part detectors. This hierarchical feature learning would prove essential for generation—to create realistic images or text, models need to understand structure at multiple levels of abstraction.
-
-\subsection{Attention Mechanism: The Transformer Revolution (2017)}
-
-The most transformative development for modern generative AI came in 2017 with the paper \cite{vaswani2017attention} ``Attention Is All You Need'' by Ashish Vaswani and colleagues at Google. This work introduced the Transformer architecture, which abandoned recurrent and convolutional layers entirely in favor of attention mechanisms.
-
-Previous sequence models, like Recurrent Neural Networks (RNNs) and Long Short-Term Memory (LSTM) networks, processed sequences one element at a time, maintaining a hidden state. This sequential processing created bottlenecks: it was slow, difficult to parallelize, and struggled with long-range dependencies despite theoretical capabilities.
-
-The Transformer's core innovation was the self-attention mechanism, which allows each position in a sequence to attend to all other positions simultaneously. For an input sequence, attention computes three vectors for each element: Query (Q), Key (K), and Value (V). The attention mechanism then computes:
+The architecture combined three key ideas. First, \emph{convolutional layers}
+apply small learned filters across the image --- rather than connecting every
+neuron to every pixel --- capturing local patterns such as edges, textures,
+and shapes while dramatically reducing the number of parameters. A
+convolutional layer applies a filter $g$ of size $k \times k$ to a local
+patch of the input $f$:
 
 \begin{equation}
-\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+\label{eq:conv}
+(f * g)[m, n] = \sum_{i=0}^{k-1} \sum_{j=0}^{k-1} f[m+i,\; n+j] \cdot g[i, j]
 \end{equation}
 
-where $d_k$ is the dimension of the key vectors, and the softmax ensures attention weights sum to one.
+where $[m, n]$ is the position of the filter's top-left corner on the input.
+Figure~\ref{fig:convolution} illustrates a filter sliding across an image.
 
-This mechanism provides several crucial advantages:
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/convolution.png}
+    \caption{A $3 \times 3$ convolutional filter sliding across an input image
+    patch. At each position, the filter values are multiplied elementwise with
+    the corresponding input values and summed to produce one output value. The
+    same filter is applied at every position, allowing the network to detect
+    the same pattern (for example, a horizontal edge) anywhere in the image
+    using a single set of learnable weights.}
+    \label{fig:convolution}
+\end{figure}
 
-\textbf{Parallelization:} Unlike RNNs that process sequentially, all attention computations can occur in parallel, dramatically accelerating training on modern hardware.
+Second, \emph{ReLU activations} --- $f(x) = \max(0, x)$ --- replaced
+traditional sigmoid functions, accelerating training by avoiding vanishing
+gradients. Third, training on \emph{GPUs} made it feasible to process
+millions of images in reasonable time, demonstrating that scale and
+computation were as important as algorithmic innovation.
 
-\textbf{Long-range Dependencies:} Any position can directly attend to any other position, with no intermediate steps. This allows the model to capture dependencies across the entire sequence, whether it's 10 words or 10,000 tokens apart.
+The deeper lesson of ImageNet was that deep networks could learn
+\emph{hierarchical representations}: early layers detect edges and colors,
+middle layers detect textures and shapes, and late layers detect object
+parts and categories. This hierarchical structure proved to be as important
+for generation as for recognition --- to generate a realistic image of a
+cat, a model must understand what a cat is at multiple levels of abstraction.
 
-\textbf{Interpretability:} Attention weights show which parts of the input the model focuses on when processing each element, providing insight into the model's reasoning.
+\subsection{From Sequential to Parallel: The Problem That Transformers Solved}
+\label{sec:rnn_limitation}
 
-The original Transformer used multi-head attention, running several attention operations in parallel with different learned transformations, then concatenating the results. This allows the model to attend to different aspects of the input simultaneously—perhaps focusing on syntactic structure with one head and semantic content with another.
+By the mid-2010s, the dominant approach to processing sequences --- text,
+speech, time series --- was the \emph{recurrent neural network} (RNN) and
+its more capable variant, the Long Short-Term Memory network (LSTM). These
+models processed a sequence one element at a time, maintaining a hidden
+state that carried information forward from earlier positions:
 
-The Transformer architecture also introduced positional encodings, since the attention mechanism itself has no inherent notion of sequence order. These encodings inject information about position into the input embeddings, allowing the model to use word order.
+\begin{equation}
+\label{eq:rnn}
+h_t = f(W_h\, h_{t-1} + W_x\, x_t)
+\end{equation}
 
-The immediate impact was revolutionary performance on machine translation tasks, but the broader implications extended far beyond. The Transformer architecture proved to be exceptionally scalable—performance improved reliably as models grew larger and were trained on more data. This scalability would enable the large language models that define modern generative AI.
+where $h_t$ is the hidden state at step $t$, $x_t$ is the input at step
+$t$, and $W_h$, $W_x$ are learned weight matrices. Figure~\ref{fig:rnn_vs_transformer}
+contrasts this sequential computation with the parallel approach of the
+Transformer.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.90\textwidth]{images/rnn_vs_transformer.png}
+    \caption{Sequential versus parallel sequence processing. Left: a
+    recurrent network processes tokens one at a time, passing a hidden state
+    from each step to the next. Information from early tokens must travel
+    through many intermediate steps to influence later ones, creating a
+    bottleneck for long sequences and making training slow because steps
+    cannot be parallelized. Right: a Transformer processes all tokens
+    simultaneously, with each token attending directly to every other token.
+    There is no intermediate chain --- any two positions are one step apart.}
+    \label{fig:rnn_vs_transformer}
+\end{figure}
+
+The sequential nature of RNNs created two serious problems. First, training
+could not be parallelized across the sequence, making it slow on modern
+hardware. Second, information from early in the sequence had to travel
+through many intermediate hidden states to reach later positions, making it
+difficult for the model to reliably connect information across long distances ---
+even with LSTMs' gating mechanisms designed to address this. These were
+fundamental architectural constraints, not implementation issues.
+
+\subsection{Attention Is All You Need: The Transformer (2017)}
+\label{sec:transformer_history}
+
+The solution came in 2017 with ``Attention Is All You Need''~\cite{vaswani2017attention}
+by Vaswani and colleagues at Google. The Transformer abandoned recurrent
+processing entirely in favor of \emph{self-attention}: a mechanism that
+allows every position in a sequence to attend directly to every other
+position in a single parallel operation.
+
+For each element in the sequence, the mechanism computes three vectors:
+a Query ($Q$, what am I looking for?), a Key ($K$, what do I offer?), and
+a Value ($V$, what information do I contain?). The attention output is a
+weighted sum of values, where the weight between two positions is determined
+by how well their query and key vectors match:
+
+\begin{equation}
+\label{eq:attention_ch1}
+\text{Attention}(Q, K, V)
+    = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right) V
+\end{equation}
+
+where $d_k$ is the dimension of the key vectors and the $\sqrt{d_k}$ scaling
+prevents the dot products from growing too large. Figure~\ref{fig:attention_ch1}
+illustrates this mechanism.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/attention_ch1.png}
+    \caption{Scaled dot-product attention. Each token projects itself into
+    three roles simultaneously: Query (what it is looking for), Key (what
+    it offers to others), and Value (the information it will share).
+    Attention scores are computed as dot products between queries and keys,
+    scaled and passed through softmax to produce weights that sum to one.
+    The output for each token is a weighted combination of all value vectors,
+    concentrating on the most relevant positions. All of this computation
+    occurs in parallel across the entire sequence.}
+    \label{fig:attention_ch1}
+\end{figure}
+
+The Transformer's advantages over recurrent networks were immediate and
+decisive. Because all attention computations happen in parallel, training
+could exploit modern GPU hardware far more effectively than sequential
+processing. Because any two positions communicate directly through the
+attention mechanism, there is no degradation over distance --- a word at
+position 1 and a word at position 500 are equally accessible to each other.
+The architecture also proved remarkably scalable: performance improved
+reliably as models grew larger and were trained on more data, a property
+we explore in depth in Chapter~4.
 
 \section{From Transformers to Generative AI}
+\label{sec:transformers_to_genai}
 
-While the 2017 Transformer paper focused on translation, researchers quickly recognized the architecture's potential for generation. By 2018, OpenAI's GPT (Generative Pre-trained Transformer) demonstrated that Transformers could generate coherent text by predicting the next word in a sequence. BERT (Bidirectional Encoder Representations from Transformers) showed how Transformers could learn rich language representations through masked language modeling.
+The Transformer was introduced for machine translation, but researchers
+quickly recognized that its properties made it ideal for a much broader
+task: learning to generate content by modeling the probability distribution
+over sequences. Three conceptual developments, each enabled by the
+Transformer, produced the generative AI systems we see today.
 
-These developments set the stage for the generative AI explosion that followed. GPT-2, GPT-3, and subsequent large language models achieved increasingly impressive generation capabilities, producing human-quality text across diverse tasks. Transformer-based image generators like DALL-E combined language and vision, while models like Stable Diffusion and Midjourney brought text-to-image generation to millions of users.
+\textbf{Pretraining at scale.} The Transformer's parallelism made it
+practical to train on datasets of unprecedented size. Researchers found
+that as models grew larger and training data grew larger, performance
+improved predictably --- following \emph{scaling laws} that showed loss
+decreasing as a power function of model size and data volume. This meant
+that investing in scale produced reliable returns, incentivizing a
+sustained increase in model size from millions of parameters in the late
+2010s to hundreds of billions by the early 2020s. Crucially, a model
+pretrained on a large general corpus could be adapted to specific tasks
+with far less data than would be required to train from scratch --- the
+knowledge learned during pretraining transferred.
 
-The journey from McCulloch-Pitts neurons to modern generative AI spans eight decades of research, setbacks, and breakthroughs. Each milestone built upon previous work while introducing novel ideas that expanded what was computationally possible. The theoretical foundations established in the 1940s remain relevant—modern deep learning still uses weighted sums and thresholds, gradient-based learning, and hierarchical representations. Yet the scale, sophistication, and capabilities have grown exponentially, particularly in the last decade.
+\textbf{Unified token representation across modalities.} Text, images,
+audio, and other signals can all be represented as sequences of discrete
+tokens. Text is tokenized into subword units; images are divided into
+patches and encoded as visual tokens; audio waveforms can be discretized
+into acoustic tokens. Once all modalities are expressed as token sequences,
+the same Transformer architecture and the same training objective ---
+predict the next token --- applies uniformly across them. This unification
+enabled a single class of model to span text generation, image synthesis,
+code completion, and scientific prediction within a common framework.
+
+\textbf{From task-specific to general-purpose models.} Earlier machine
+learning systems were designed for specific tasks: one model for translation,
+another for classification, another for question answering. Transformer-based
+models trained on sufficiently large and diverse data learned general
+capabilities that transferred across tasks without task-specific
+architectures. The same model weights could translate, summarize,
+answer questions, write code, and generate images by virtue of having
+internalized broad statistical regularities of the training data.
+Conditioning on a prompt --- as described in Chapter~3 --- allowed users
+to direct these general capabilities toward specific tasks without
+retraining the model.
+
+Together, these three developments --- scale, unified tokenization, and
+generality --- transformed the Transformer from a translation system into the
+foundation for modern generative AI. The mathematical and conceptual tools
+that make this possible are the subject of the remaining chapters.
 
 \section{Conclusion}
 
-Understanding this historical progression is essential for working with generative AI. The challenges researchers overcame—from training deep networks to capturing long-range dependencies—shaped the architectures and techniques we use today. The principles established in these landmark papers continue to guide current research and development.
+The history traced in this chapter spans eight decades of research,
+setbacks, and breakthroughs. Several themes stand out.
 
-As we proceed through subsequent chapters, we will build on these foundations, exploring how modern generative AI systems work, how to use them effectively, and how to develop new applications. The history teaches us that progress in AI often comes from combining old ideas in new ways, scaling up successful approaches, and persistently attacking fundamental limitations. These lessons remain as relevant today as we push toward even more capable generative systems.
+\textbf{Ideas persist.} The weighted sum of inputs that McCulloch and Pitts
+wrote down in 1943 appears, in more sophisticated form, in every transformer
+layer operating today. The gradient-based learning rule that Rosenblatt
+proposed in 1958 is the foundation of backpropagation and modern optimizers.
+Fundamental mathematical structures have proven more durable than any
+particular implementation.
 
-The story of generative AI is far from complete. Just as the Transformer built upon decades of neural network research, future breakthroughs will build upon today's large language models and diffusion systems. By understanding where we've been, we can better anticipate where we're going and contribute to the next chapter in this remarkable technological evolution.
+\textbf{Limitations drive progress.} The AI Winter was not a failure but a
+clarification: Minsky and Papert showed precisely what single-layer networks
+could not do, which pointed directly at what needed to be solved. The
+sequential bottleneck of recurrent networks defined the problem that the
+Transformer solved. Constraints have repeatedly been the most productive
+direction-setters in the field.
+
+\textbf{Scale amplifies.} At every stage, increases in scale --- data,
+computation, model size --- have unlocked capabilities that seemed out of
+reach at smaller scales. The deep learning revolution of 2012 required
+GPUs and millions of labeled images. The generative AI revolution of the
+2020s required transformer architectures and trillions of tokens. In both
+cases, the right architecture combined with sufficient scale produced
+emergent capabilities.
+
+\textbf{The field is now recognized as foundational science.} The 2024
+Nobel Prize in Physics awarded to Hopfield and Hinton marks a formal
+acknowledgment that neural network research has produced ideas of genuine
+scientific depth, not merely engineering utility.
+
+Chapter~2 develops the mathematical foundations --- linear algebra,
+probability, and calculus --- that underlie everything described here.
+Chapter~3 formalizes what it means to generate: probability distributions,
+conditioning, and the statistical structure of language and images that
+makes generation possible. Chapter~4 describes the transformer architecture
+in full technical detail. By the end of those chapters, every equation
+in this historical overview will have been derived from first principles.
 
 \chapter{Mathematical Foundations for Generative AI}
 
@@ -12510,6 +12858,14 @@ C.~E. Shannon.
 \newblock A mathematical theory of communication.
 \newblock \textit{Bell System Technical Journal}, 27(3):379--423, 623--656, 1948.
 
+
+\bibitem{hopfield1982neural}
+John~J. Hopfield.
+\newblock Neural networks and physical systems with emergent collective
+  computational abilities.
+\newblock \textit{Proceedings of the National Academy of Sciences},
+  79(8):2554--2558, 1982.
+  
 \end{thebibliography}
 
 \end{document}
