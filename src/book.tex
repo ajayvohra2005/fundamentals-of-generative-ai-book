@@ -467,6 +467,7 @@ H(\mathbf{p}, \mathbf{q}) = -\sum_{i=1}^{K} p_i \ln q_i
 \end{equation}
 
 \subsection{Cross-Entropy Example}
+\label{sec:cross-entropy}
 
 Consider:
 \begin{equation}
@@ -1538,10 +1539,75 @@ The structure consists of two linear transformations with a nonlinearity:
 
 where $\mathbf{W}^1$ expands the dimension by 4× and $\mathbf{W}^2$ projects it back. The expansion provides capacity for the MLP to learn complex transformations, accounting for about two-thirds of the model's parameters.
 
-\section{Vision Transformers}
+
+\section{Pre-training Encoder Models: Masked Language Modeling}
+
+\subsection{Training Objective}
+
+Encoder models are typically pre-trained with masked language modeling (MLM), introduced by BERT. The training procedure:
+
+\begin{enumerate}
+\item Randomly select 15\% of input tokens for masking
+\item Of the selected tokens:
+   \begin{itemize}
+   \item Replace 80\% with a special [MASK] token
+   \item Replace 10\% with random tokens from the vocabulary
+   \item Leave 10\% unchanged
+   \end{itemize}
+\item Train the model to predict the original tokens at masked positions
+\end{enumerate}
+
+\textbf{Example:} 
+\begin{itemize}
+\item Original: ``The dog is chasing the cat on a busy street with traffic.''
+\item Token IDs: [2, 14, 1952, 25, 13258, 14, 2008, 27, 21, 4394, 446, 29, 2227, 9, 3]
+\item Corrupted IDs: [2, 14, 1952, 4, 13258, 14, 2008, 27, 21, 4394, 1312, 29, 2227, 9, 3]
+\item Labels: [-100, -100, -100, 25, -100, -100, -100, 27, -100, -100, 446, -100, -100, -100, -100]
+\end{itemize}
+
+The label -100 indicates positions where no loss is computed. Only masked positions contribute to the loss.
+
+\subsection{Encoder Loss Function}
+\label{sec:encoder-loss-function}
+
+For each masked position, the model outputs a probability distribution over the
+vocabulary via a linear layer and softmax:
+
+\begin{equation}
+\mathbf{p} = \text{softmax}(\mathbf{h} \mathbf{W}_{vocab})
+    \in \mathbb{R}^{\text{vocab\_size}}
+\end{equation}
+
+where $\mathbf{h}$ is the encoder's output embedding at that position and
+$\mathbf{W}_{vocab}$ is a learned projection matrix of shape
+$(h,\, \text{vocab\_size})$. Each entry $p_v$ is the model's predicted
+probability that the masked token is vocabulary item $v$.
+
+The target is represented as a one-hot vector
+$\mathbf{y} \in \{0,1\}^{\text{vocab\_size}}$, where $y_v = 1$ for the single
+correct token $v^*$ and $y_v = 0$ for all other vocabulary items. The
+cross-entropy (Section~\ref{sec:cross-entropy}) loss over all masked positions is:
+
+\begin{equation}
+\mathcal{L}_{MLM}
+    = -\sum_{i \in \text{masked}} \sum_{v=1}^{V} y_{i,v} \log p_{i,v}
+    = -\sum_{i \in \text{masked}} \log p_{i,v^*_i}
+\end{equation}
+
+The second equality follows directly from the one-hot structure: because
+$y_{i,v} = 0$ for every $v \neq v^*_i$, all terms in the inner sum vanish
+except the one corresponding to the true token, leaving only
+$-\log p_{i,v^*_i}$---the negative log-probability the model assigned to the
+correct answer at masked position $i$.
+
+This objective forces the model to use bidirectional context to predict masked tokens, resulting in rich contextual representations.
+
+\textbf{Why This Works:} MLM pre-training teaches the model to understand language deeply. To predict a masked word, the model must use syntactic structure (grammar), semantic relationships (meaning), and world knowledge (facts). The learned representations transfer well to downstream tasks.
+
+\section{Vision Encoder Transformers}
 \label{sec:vit}
 
-Transformers can be adapted to process images by converting spatial structure into
+Encoder Transformers can be adapted to process images by converting spatial structure into
 sequences. Unlike text, which is already a discrete sequence of tokens, images are
 continuous 2D grids of pixels. The Vision Transformer (ViT)
 \cite{dosovitskiy2020image} bridges this gap through \textit{patchification}:
@@ -1624,7 +1690,7 @@ limitations.
 Pix2Struct \cite{lee2023pix2struct} preserves the original image aspect ratio
 by scaling the image to fit within a maximum sequence length budget $T_{max}$,
 then extracting as many fixed-size $P \times P$ patches as possible without any
-padding or distortion. The variable spatial layout (e.g., $r$ rows and $c$
+padding or distortion (Figure~\ref{fig:pix2struct}). The variable spatial layout (e.g., $r$ rows and $c$
 columns, $r \neq c$) is encoded via a learnable 2D positional encoding that
 explicitly represents each patch's row and column index, rather than a flat 1D
 index. This is particularly valuable for document and chart understanding, where
@@ -1648,7 +1714,7 @@ and distortion from forced square resizing causes significant information loss.
 FlexiViT \cite{beyer2023flexivit} trains a single model to handle multiple patch
 sizes by sampling a patch size $P$ uniformly at random from a predefined set
 (e.g., $\{8, 10, 12, \ldots, 48\}$ for a $240{\times}240$ image) at each
-training step. Rather than maintaining a separate projection matrix for each $P$,
+training step (Figure~\ref{fig:flexivit}). Rather than maintaining a separate projection matrix for each $P$,
 FlexiViT maintains one base weight matrix $\mathbf{W}_{base}$ of fixed size and
 resizes it via interpolation to match the current $P$. This parameter sharing
 ensures adequate training of all resolutions without the memory and design
@@ -1671,7 +1737,7 @@ tunable accuracy--compute trade-off within a single checkpoint.
 \end{figure}
 
 NaViT (Native Resolution ViT) \cite{dehghani2023navit} eliminates fixed-resolution
-resizing entirely. Each image is patchified at its original resolution and aspect
+resizing entirely (Figure~\ref{fig:navit}). Each image is patchified at its original resolution and aspect
 ratio, and the resulting variable-length patch sequences from multiple images are
 \textit{packed} into a single training sequence---a technique called
 \textit{Patch n' Pack}, inspired by sequence packing in NLP. Attention masks enforce
@@ -1680,53 +1746,6 @@ one another, preserving per-image independence. This removes distortion complete
 improves training efficiency (no wasted compute on padding short images to a fixed
 length), and at inference time allows resolution to be adjusted freely to trade
 cost against performance.
-
-\section{Pre-training Encoder Models: Masked Language Modeling}
-
-\subsection{Training Objective}
-
-Encoder models are typically pre-trained with masked language modeling (MLM), introduced by BERT. The training procedure:
-
-\begin{enumerate}
-\item Randomly select 15\% of input tokens for masking
-\item Of the selected tokens:
-   \begin{itemize}
-   \item Replace 80\% with a special [MASK] token
-   \item Replace 10\% with random tokens from the vocabulary
-   \item Leave 10\% unchanged
-   \end{itemize}
-\item Train the model to predict the original tokens at masked positions
-\end{enumerate}
-
-\textbf{Example:} 
-\begin{itemize}
-\item Original: ``The dog is chasing the cat on a busy street with traffic.''
-\item Token IDs: [2, 14, 1952, 25, 13258, 14, 2008, 27, 21, 4394, 446, 29, 2227, 9, 3]
-\item Corrupted IDs: [2, 14, 1952, 4, 13258, 14, 2008, 27, 21, 4394, 1312, 29, 2227, 9, 3]
-\item Labels: [-100, -100, -100, 25, -100, -100, -100, 27, -100, -100, 446, -100, -100, -100, -100]
-\end{itemize}
-
-The label -100 indicates positions where no loss is computed. Only masked positions contribute to the loss.
-
-\subsection{Loss Function}
-
-For each masked position, the model outputs a probability distribution over the vocabulary via a linear layer and softmax:
-
-\begin{equation}
-\mathbf{p}_{predicted} = \text{softmax}(\mathbf{h} \mathbf{W}_{vocab})
-\end{equation}
-
-where $\mathbf{h}$ is the encoder's embedding at that position, and $\mathbf{W}_{vocab}$ is a learned matrix of shape $(h, \text{vocab\_size})$.
-
-The loss is the cross-entropy between the predicted distribution and the true token (represented as a one-hot vector):
-
-\begin{equation}
-\mathcal{L}_{MLM} = -\sum_{i \in \text{masked}} \log p_{predicted}(\text{true\_token}_i)
-\end{equation}
-
-This objective forces the model to use bidirectional context to predict masked tokens, resulting in rich contextual representations.
-
-\textbf{Why This Works:} MLM pre-training teaches the model to understand language deeply. To predict a masked word, the model must use syntactic structure (grammar), semantic relationships (meaning), and world knowledge (facts). The learned representations transfer well to downstream tasks.
 
 \section{Transformer Decoder Architecture}
 
@@ -1780,18 +1799,32 @@ During generation, the decoder produces one token at a time:
 \begin{enumerate}
 \item Start with an initial prompt (or a start-of-sequence token)
 \item Feed the prompt through the decoder to get output embeddings
-\item Apply a linear projection and softmax to get a probability distribution over the next token
-\item Sample a token from this distribution (or take the highest-probability token)
+\item Apply a linear projection and softmax to get a probability distribution
+      over the next token
+\item Sample a token from this distribution (or take the highest-probability
+      token)
 \item Append the generated token to the input and repeat
 \end{enumerate}
 
-Mathematically, the model learns:
+Mathematically, let $v_i \in \mathcal{V}$ denote the vocabulary token at
+position $i$, where $\mathcal{V}$ is the token vocabulary. The model learns to
+factorize the joint probability of a sequence of $T$ tokens as a product of
+conditional probabilities:
 
 \begin{equation}
-p(\mathbf{z}) = \prod_{i=1}^{T} p(z_i | z_1, \ldots, z_{i-1})
+p(\mathbf{v}) = \prod_{i=1}^{T} p(v_i \mid v_1, \ldots, v_{i-1})
 \end{equation}
 
-where each conditional probability $p(z_i | z_1, \ldots, z_{i-1})$ is computed by the decoder.
+Each factor $p(v_i \mid v_1, \ldots, v_{i-1})$ is the probability the model
+assigns to token $v_i$ being the correct next token, given every token that
+has appeared before it. The decoder computes this distribution at position $i$
+by attending only to positions $1$ through $i-1$ (enforced by the causal mask
+described above), projecting the resulting hidden state through $\mathbf{W}_{vocab}$,
+and applying softmax to produce a probability over all $|\mathcal{V}|$ vocabulary
+items. Generation then proceeds left to right: once $v_i$ is sampled or
+selected, it is appended to the context and the process repeats for position
+$i+1$.
+
 
 \section{Pre-training Decoder Models: Causal Language Modeling}
 
@@ -1814,15 +1847,29 @@ Decoder pre-training uses causal (autoregressive) language modeling. The trainin
 
 At each position, the model predicts the next token. Position 0 predicts token 1, position 1 predicts token 2, and so on.
 
-\subsection{Loss Function}
+\subsection{Decoder Loss Function}
 
-The loss is the cross-entropy between predicted and actual next tokens, averaged over all positions:
+The loss function for causal language modeling has the same cross-entropy form
+derived in Section~\ref{sec:encoder-loss-function}, with one structural
+difference: rather than summing only over the subset of masked positions, the
+loss is computed at every position in the sequence, because every token is a
+prediction target. Using the same notation as before---$\mathbf{p}_i$ for the
+predicted distribution at position $i$, $\mathbf{y}_i$ for the one-hot target,
+and $v^*_i$ for the true token at position $i$---the loss averaged over all
+$T$ positions is:
 
 \begin{equation}
-\mathcal{L}_{CLM} = -\frac{1}{T} \sum_{i=1}^{T} \log p_{predicted}(z_i | z_1, \ldots, z_{i-1})
+\mathcal{L}_{CLM}
+    = -\frac{1}{T} \sum_{i=1}^{T} \sum_{v=1}^{V} y_{i,v} \log p_{i,v}
+    = -\frac{1}{T} \sum_{i=1}^{T} \log p_{i,v^*_i}
 \end{equation}
 
-At each position $i$, the model outputs a probability distribution over the vocabulary, and we compute the negative log-probability of the actual next token.
+The only differences from $\mathcal{L}_{MLM}$ are the $\frac{1}{T}$
+averaging factor and the fact that the outer sum runs over all $T$ positions
+rather than the masked subset. The collapse from the double sum to the single
+term $\log p_{i,v^*_i}$ follows from the one-hot structure of $\mathbf{y}_i$
+by exactly the same argument as before.
+
 
 \textbf{Why This Works:} Causal language modeling teaches the model the statistical structure of language. By predicting the next token across billions of examples, the model learns grammar, facts, reasoning patterns, and even some level of common-sense understanding. The simplicity of the objective (just predict the next token) belies the complexity of the knowledge required to minimize the loss effectively.
 
@@ -1908,14 +1955,26 @@ Encoder-decoder models are typically trained on paired sequences. Common pre-tra
 
 \textbf{Sequence-to-Sequence Tasks:} Directly train on task-specific pairs (source-target for translation, document-summary for summarization).
 
-The loss is the cross-entropy between predicted and actual target tokens:
+\textbf{Sequence-to-Sequence Loss Function:}
+The loss has the same cross-entropy form established in
+Section~\ref{sec:encoder-loss-function}, now applied to the $T_{target}$ tokens
+of the target sequence. At each target position $i$, the decoder produces a
+predicted distribution $\mathbf{p}_i \in \mathbb{R}^V$ over the vocabulary,
+conditioned on both the encoder output $\mathbf{Z}_{enc}$ (via cross-attention)
+and all previously generated target tokens. The one-hot target $\mathbf{y}_i$
+identifies the true target token $v^*_i$, and the loss is:
 
 \begin{equation}
-\mathcal{L}_{seq2seq} = -\sum_{i=1}^{T_{target}} \log p(y_i | y_1, \ldots, y_{i-1}, \mathbf{Z}_{enc})
+\mathcal{L}_{seq2seq}
+    = -\sum_{i=1}^{T_{target}} \sum_{v=1}^{V} y_{i,v} \log p_{i,v}
+    = -\sum_{i=1}^{T_{target}} \log p_{i,v^*_i}
 \end{equation}
 
-where $\mathbf{Z}_{enc}$ represents the encoder's conditioning information.
-
+The only structural difference from $\mathcal{L}_{CLM}$ is that the sum runs
+over the $T_{target}$ target tokens rather than all positions in a single
+sequence, and each $\mathbf{p}_i$ is additionally conditioned on
+$\mathbf{Z}_{enc}$---the encoder's representation of the source sequence---which
+enters through the cross-attention sublayers described above.
 
 \section{Comparing the Three Architectures}
 
@@ -1937,6 +1996,8 @@ Recent trends strongly favor decoder-only architectures for large language model
 \textbf{Simplicity:} A single architecture handles all tasks, simplifying training, deployment, and maintenance.
 
 \textbf{In-Context Learning:} Large decoder-only models can learn new tasks from examples in the prompt without fine-tuning, a capability not anticipated but empirically observed.
+
+
 
 \section{Architectural Innovations}
 
@@ -2020,18 +2081,18 @@ bandwidth required to read this \emph{KV cache} becomes the primary limit on
 generation throughput.
 
 \textbf{Grouped-Query Attention (GQA)}~\cite{ainslie2023gqa} addresses this
-by sharing key and value projections across groups of query heads. In standard multi-head attention
-(MHA) with $n_h$ heads, each head maintains its own K and V projections, so
-the KV cache scales as $O(n_h \cdot L)$ where $L$ is the sequence length.
-Multi-query attention (MQA) , as shown in
+by sharing key and value projections across groups of query heads. In standard
+multi-head attention (MHA) with $n_h$ heads, each head maintains its own K
+and V projections, so the KV cache scales as $O(n_h \cdot L)$ where $L$ is
+the sequence length. Multi-query attention (MQA), as shown in
 Figure~\ref{fig:mqa}, reduces this to a single shared K and V pair,
 dramatically shrinking the cache but at the cost of representational capacity.
 GQA interpolates: the $n_h$ query heads are divided into $G$ groups, and all
 heads within a group share one K and one V projection, as shown in
-Figure~\ref{fig:gqa}. The KV cache scales as
-$O(G \cdot L)$ rather than $O(n_h \cdot L)$, and empirically a small number
-of groups (often 4--8) recovers nearly all of MHA's quality while reducing
-cache size by a factor of $n_h / G$.
+Figure~\ref{fig:gqa}. The KV cache scales as $O(G \cdot L)$ rather than
+$O(n_h \cdot L)$, and empirically a small number of groups (often 4--8)
+recovers nearly all of MHA's quality while reducing cache size by a factor of
+$n_h / G$.
 
 \begin{figure}[htbp]
     \centering
@@ -2054,16 +2115,18 @@ low-dimensional \emph{latent vector} per token, which is the only quantity
 that needs to be cached. Full-rank keys and values are reconstructed at query
 time via learned up-projection matrices.
 
-Formally, let $\mathbf{h}_t \in \mathbb{R}^d$ be the attention input for
-token $t$. MLA computes a compressed latent:
+Formally, let $\mathbf{x}_t \in \mathbb{R}^h$ be the attention input for
+token $t$, where $h$ is the model's hidden dimension as defined throughout
+this chapter. MLA computes a compressed latent:
 
 \begin{equation}
-\mathbf{c}_t^{KV} = \mathbf{W}^{DKV} \mathbf{h}_t, \quad
+\mathbf{c}_t^{KV} = \mathbf{W}^{DKV} \mathbf{x}_t, \quad
 \mathbf{c}_t^{KV} \in \mathbb{R}^{d_c}, \quad d_c \ll d_h n_h
 \end{equation}
 
-where $\mathbf{W}^{DKV}$ is a learned down-projection. At query time, keys
-and values are reconstructed:
+where $\mathbf{W}^{DKV}$ is a learned down-projection, $d_h$ is the
+per-head dimension, and $d_c$ is the compressed latent dimension. At query
+time, keys and values are reconstructed:
 
 \begin{equation}
 \mathbf{K}_t = \mathbf{W}^{UK} \mathbf{c}_t^{KV}, \qquad
@@ -2176,7 +2239,7 @@ The result is a function of $n - m$ only. This means that two tokens
 separated by an offset of 10 produce the same positional contribution to the
 attention score regardless of whether they appear at positions $(1, 11)$ or
 $(500, 510)$. The model therefore learns positional relationships that
-generalise across absolute positions rather than memorising absolute-position
+generalize across absolute positions rather than memorising absolute-position
 statistics from training data.
  
 Because the encoding is applied to queries and keys rather than to the token
@@ -2244,7 +2307,7 @@ architectural changes).
 % ------------------------------------------------------------
 
 A fundamental tension in language model design is that larger models
-generalise better and exhibit stronger capabilities, but larger models are also
+generalize better and exhibit stronger capabilities, but larger models are also
 more expensive to run at inference time: every parameter is activated for every
 token. Mixture of Experts (MoE) (Figure \ref{fig:mixture_of_experts})  architectures dissolve this coupling by
 making the model's \emph{active} parameter count a design variable independent
@@ -2470,7 +2533,7 @@ way regardless of where in the context window these patches appear.
 
 \textbf{Temporal RoPE.} For video, a third index---frame number $f$---is
 added. Each token's position triple $(r, c, f)$ generates a rotation that
-factorises across the three dimensions, so that spatial proximity within a
+factorizes across the three dimensions, so that spatial proximity within a
 frame and temporal proximity across frames are encoded independently and
 can both influence attention patterns.
 
