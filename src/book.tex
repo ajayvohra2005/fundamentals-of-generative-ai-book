@@ -865,504 +865,793 @@ The mathematics of generative AI is fundamentally accessible—it builds on fami
 
 \section{Introduction}
 
-Generative AI represents a fundamental shift in how we think about artificial intelligence. Rather than simply analyzing or classifying existing data, generative models create new content—text, images, videos, molecular structures, and more. Understanding what it means to ``generate'' requires grasping several interconnected concepts: the mathematical representation of outputs, the probabilistic nature of generation, the role of conditioning information, and the relationship between training data and learned distributions.
+Generative AI represents a fundamental shift in how we think about artificial
+intelligence. Rather than simply analyzing or classifying existing data,
+generative models create new content --- text, images, video, molecular
+structures, and more. Understanding what it means to ``generate'' requires
+grasping several interconnected concepts: the mathematical representation of
+outputs, the probabilistic nature of generation, the role of conditioning
+information, and the relationship between training data and learned
+distributions.
 
-This chapter establishes the conceptual foundations that underlie all generative AI systems. We'll explore what these systems generate, what generation means mathematically, how conditioning enables controlled generation, and how training datasets enable models to approximate unknown data distributions. These concepts apply universally across modalities—whether generating Shakespeare-style text, photorealistic images, or novel protein structures.
+This chapter establishes the conceptual foundations that underlie all generative
+AI systems. We explore what these systems generate, what generation means
+mathematically, how conditioning enables controlled generation, and how training
+datasets allow models to approximate unknown data distributions. These concepts
+apply universally across modalities --- whether generating text, photorealistic
+images, or novel protein structures.
 
-By framing generation as probabilistic sampling from learned distributions, we provide a unified perspective that encompasses diverse generative AI architectures. This probabilistic view explains both the creativity of generative models (they can produce novel outputs) and their occasional failures (sampling from a learned approximation introduces uncertainty). Understanding these foundations is essential for both using generative AI effectively and developing new generative systems.
+A key theme is that the mathematics of generation has deep historical roots.
+Long before neural networks, researchers discovered that sequences of symbols ---
+letters, words, musical notes --- obey statistical regularities that can be
+captured with probability theory. Following that lineage from its origins to
+modern large-scale models reveals not just how generative AI works, but why it
+works the way it does.
+
+By framing generation as probabilistic sampling from learned distributions, we
+provide a unified perspective that encompasses diverse generative AI
+architectures. This probabilistic view explains both the creativity of generative
+models (they can produce novel outputs by sampling from a distribution) and their
+occasional failures (sampling from a learned approximation introduces
+uncertainty). Understanding these foundations is essential for both using
+generative AI effectively and reasoning clearly about its capabilities and limits.
 
 \section{What Does Generative AI Generate?}
 
 \subsection{The Mathematical Representation of Outputs}
 
-At its core, generative AI produces structured data represented as vectors or tensors of numbers. While the semantic content varies dramatically across modalities—a poem, a portrait, a protein—the mathematical representation follows a common pattern: a $d$-dimensional vector $\mathbf{z}$ of values.
+At its core, generative AI produces structured data represented as vectors or
+tensors of numbers. While the semantic content varies dramatically across
+modalities --- a poem, a portrait, a protein --- the mathematical representation
+follows a common pattern: a $d$-dimensional vector $\mathbf{z}$ of values.
 
 For most modalities, this output vector contains real numbers:
+
 \begin{equation}
 \mathbf{z} \in \mathbb{R}^d
 \end{equation}
 
-The dimension $d$ depends on the modality and the specific task, ranging from hundreds for short text sequences to millions for high-resolution images.
+The dimension $d$ depends on the modality and the specific task, ranging from
+hundreds for short text sequences to millions for high-resolution images. We use
+$\mathbf{z}$ throughout this chapter as a general placeholder for any generated
+output regardless of modality. Later chapters introduce modality-specific
+notation where greater precision is needed --- for example, when discussing
+language models, individual tokens drawn from a vocabulary are written as
+$v_i \in \mathcal{V}$ rather than the generic $z_i$.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{images/output_modalities.png}
+    \caption{Generative AI outputs across modalities. In every case the output
+    is a structured vector or tensor of numbers: integer token IDs for text,
+    real-valued pixel intensities for images, $(x, y, z)$ atomic coordinates
+    for molecules. The dimension $d$ varies from thousands (text) to millions
+    (images) to tens of millions (video).}
+    \label{fig:output_modalities}
+\end{figure}
 
 \subsection{Text Generation}
 
-For text generation, the output has a special structure. Text consists of discrete tokens—words, subwords, or characters—drawn from a finite vocabulary. A language model generates a sequence of token identifiers, making the output a vector of natural numbers:
+For text generation, the output has a special structure. Text consists of
+discrete tokens --- words, subwords, or characters --- drawn from a finite
+vocabulary. A language model generates a sequence of token identifiers, making
+the output a vector of natural numbers:
 
 \begin{equation}
 \mathbf{z} \in \mathbb{N}^d
 \end{equation}
 
-Here, $d$ represents the number of generated tokens. Each element $z_i$ is an integer indexing into the model's vocabulary (typically 32,000 to 100,000 tokens for modern language models).
+Here $d$ represents the number of generated tokens. Each element $z_i$ is an
+integer indexing into the model's vocabulary (typically 32,000 to 100,000 tokens
+for modern language models).
 
-\textbf{Example:} Consider generating the sentence ``The cat sat on the mat.'' A tokenizer might represent this as token IDs: $[450, 2472, 3332, 319, 262, 2603]$, making $d = 6$. The model generates this sequence one token at a time, predicting each token based on previous tokens.
+\textbf{Example:} Consider generating the sentence ``The cat sat on the mat.''
+A tokenizer might represent this as token IDs $[450, 2472, 3332, 319, 262,
+2603]$, making $d = 6$. The model generates this sequence one token at a time,
+predicting each token based on all previous tokens.
 
-The dimension $d$ is variable—it represents the length of the generated text, which can range from a single token to thousands of tokens for long-form content. Modern language models use special tokens to mark sequence boundaries: a beginning-of-sequence token and an end-of-sequence token that signals generation completion.
+The dimension $d$ is variable --- it represents the length of the generated
+text, which can range from a single token to thousands of tokens for long-form
+content. Modern language models use special tokens to mark sequence boundaries:
+a beginning-of-sequence token and an end-of-sequence token that signals
+generation completion.
 
 \subsection{Image Generation}
 
-For image generation, the output is a three-dimensional tensor representing pixel values across spatial dimensions and color channels. An image of height $H$ pixels and width $W$ pixels with three color channels (red, green, blue) has:
+For image generation, the output is a three-dimensional tensor representing pixel
+values across spatial dimensions and color channels. An image of height $H$
+pixels and width $W$ pixels with three color channels (red, green, blue) has:
 
 \begin{equation}
 d = H \times W \times 3
 \end{equation}
 
-\textbf{Example:} A $512 \times 512$ RGB image has $d = 512 \times 512 \times 3 = 786,432$ values. Each value typically represents a pixel intensity, often normalized to the range $[0, 1]$ or $[-1, 1]$.
+\textbf{Example:} A $512 \times 512$ RGB image has $d = 512 \times 512 \times
+3 = 786{,}432$ values. Each value typically represents a pixel intensity,
+normalized to $[0, 1]$ or $[-1, 1]$.
 
-The three-dimensional structure $(H, W, 3)$ is typically flattened into a one-dimensional vector for certain operations, but the spatial and color structure is preserved in the model architecture through convolutional or attention-based processing.
-
-Modern image generation models like Stable Diffusion work in a compressed latent space of much lower dimension (often $64 \times 64 \times 4 = 16,384$ for a $512 \times 512$ image), then use a decoder to upscale to full resolution. This compression makes generation computationally tractable while preserving semantic content.
+Modern image generation models often work in a compressed \emph{latent space}
+of much lower dimension --- for instance $64 \times 64 \times 4 = 16{,}384$
+values for a $512 \times 512$ image --- and use a learned decoder to expand the
+latent representation back to full resolution. This compression makes generation
+computationally tractable while preserving semantic content.
 
 \subsection{Video Generation}
 
-Video extends images with a temporal dimension. A video with $T$ frames, where each frame has height $H$ and width $W$ with RGB channels, has:
+Video extends images with a temporal dimension. A video with $T$ frames, each of
+height $H$ and width $W$ with RGB channels, has:
 
 \begin{equation}
 d = T \times H \times W \times 3
 \end{equation}
 
-\textbf{Example:} A 10-second video at 24 frames per second with $256 \times 256$ resolution has $d = 240 \times 256 \times 256 \times 3 = 47,185,920$ values—nearly 50 million numbers to generate.
-
-The enormous dimensionality of video generation presents significant computational challenges. Modern video generation models employ several strategies to manage this complexity:
-
-\begin{itemize}
-\item \textbf{Temporal compression:} Generate at lower frame rates, then interpolate
-\item \textbf{Spatial compression:} Work in latent space like image models
-\item \textbf{Autoregressive generation:} Generate frames sequentially, conditioning each on previous frames
-\item \textbf{Joint spatiotemporal models:} Use 3D convolutions or spatiotemporal attention
-\end{itemize}
-
-Despite these optimizations, video generation remains computationally demanding, often requiring minutes to hours on powerful GPUs even for short clips.
+\textbf{Example:} A 10-second clip at 24 frames per second with $256 \times 256$
+resolution has $d = 240 \times 256 \times 256 \times 3 \approx 47$ million
+values. The enormous dimensionality makes video generation significantly more
+challenging than image generation, requiring temporal compression, latent-space
+techniques, and careful modeling of motion consistency across frames.
 
 \subsection{Molecular Structure Generation}
 
-In computational biology, generative models create three-dimensional molecular structures. For a molecule with $N$ atoms, each atom's position in 3D space is represented by three coordinates $(x, y, z)$, giving:
+In computational biology, generative models create three-dimensional molecular
+structures. For a molecule with $N$ atoms, each atom's position in 3D space is
+represented by three coordinates $(x, y, z)$, giving:
 
 \begin{equation}
 d = N \times 3
 \end{equation}
 
-\textbf{Example:} A small protein with 100 amino acids might have roughly 1,000 atoms (including backbone and side chains), yielding $d = 3,000$ coordinates to generate.
-
-Beyond atomic positions, molecular generation might include:
-\begin{itemize}
-\item Atom types (carbon, nitrogen, oxygen, etc.)
-\item Bond information (single, double, triple bonds)
-\item Conformational details (rotations around bonds)
-\end{itemize}
-
-Models like AlphaFold3 and ESMFold generate protein structures by predicting atomic coordinates given an amino acid sequence. These models must satisfy physical constraints: atoms cannot overlap, bond lengths and angles must fall within reasonable ranges, and the overall structure should be energetically favorable.
-
-The ability to generate valid molecular structures has profound implications for drug discovery, protein engineering, and understanding biological mechanisms. Unlike text or images where ``validity'' is somewhat subjective, molecular structures must obey the laws of physics and chemistry.
+\textbf{Example:} A small protein with 100 amino acids might have roughly 1,000
+heavy atoms, yielding $d = 3{,}000$ coordinates. Beyond atomic positions,
+molecular generation may include atom types (carbon, nitrogen, oxygen), bond
+information, and conformational details. Crucially, generated structures must
+satisfy physical constraints --- atoms cannot overlap, bond lengths and angles
+must be chemically realistic, and the overall structure should be energetically
+stable --- making validity a hard requirement rather than a soft aesthetic
+preference.
 
 \section{What Does It Mean to Generate?}
 
 \subsection{Generation as Probabilistic Sampling}
 
-Generation is fundamentally a probabilistic process. When we ask a generative model to create content, we're requesting a sample from a probability distribution over possible outputs. Mathematically, to generate means to sample $\mathbf{z}$ from a data probability distribution $p_{data}$:
+Generation is fundamentally a probabilistic process. When we ask a generative
+model to create content, we are requesting a sample from a probability
+distribution over possible outputs. Mathematically, to generate means to sample
+$\mathbf{z}$ from a data probability distribution $p_{data}$:
 
 \begin{equation}
 \mathbf{z} \sim p_{data}
 \end{equation}
 
-The notation ``$\sim$'' means ``is sampled from'' or ``is drawn from'' the distribution.
+The notation ``$\sim$'' means ``is sampled from'' or ``is drawn from'' the
+distribution. To understand why this probabilistic framing is the right one ---
+and where it comes from --- it helps to trace the idea to its origins.
+
+\subsection{The Statistical Origins of Generation: Markov and Shannon}
+
+\subsubsection*{Markov and the Chain of Probability}
+
+In 1913, the Russian mathematician Andrei Markov undertook a painstaking
+analysis of Alexander Pushkin's novel-in-verse \textit{Eugene Onegin}. Working
+entirely by hand, Markov laboriously counted the transitions between vowels and
+consonants across roughly 20,000 successive letters of the text~\cite{markov1913}. His
+goal was not literary criticism but a mathematical one: to demonstrate that the
+letters of natural language are not independent of one another. He wanted to
+show that the probability of the next letter depends on what came before it.
+
+Markov's findings confirmed his hypothesis. In Russian text, vowels and
+consonants do not alternate randomly; they cluster in patterns governed by the
+language's phonological rules. The probability of a vowel appearing next is
+substantially higher if the preceding letter was a consonant, and lower if it
+was already a vowel. This dependency could be captured precisely by a
+\emph{conditional probability}: the probability of the next symbol given the
+current one.
+
+What Markov had discovered --- and proved rigorously --- was that a sequence
+of symbols could be modeled as a chain of conditional probabilities, where each
+step depends on the previous state. We now call these \emph{Markov chains}.
+The key equation is simple: if $z_i$ denotes the $i$-th symbol in a sequence,
+then the probability of the next symbol depends only on the current one:
+
+\begin{equation}
+p(z_{i+1} \mid z_1, z_2, \ldots, z_i) = p(z_{i+1} \mid z_i)
+\end{equation}
+
+This is the \emph{Markov property}: the future depends on the past only through
+the present state. With it, the joint probability of an entire sequence
+factorizes neatly into a product of conditional probabilities:
+
+\begin{equation}
+p(\mathbf{z}) = p(z_1) \prod_{i=1}^{T-1} p(z_{i+1} \mid z_i)
+\end{equation}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/markov_chain.png}
+    \caption{A Markov chain over vowels (V) and consonants (C), inspired by
+    Markov's 1913 analysis of \textit{Eugene Onegin}. Arrows show transition
+    probabilities: the probability of the next letter type depends only on the
+    current letter type, not on the full preceding sequence. This simple
+    conditional structure produces realistic-looking sequences of letters
+    despite its simplicity.}
+    \label{fig:markov_chain}
+\end{figure}
+
+Markov's insight was profound but limited. The Markov property assumes that
+only the immediately preceding symbol matters --- a strong simplification that
+fails to capture longer-range structure in language. In English, whether a
+sentence ends with a period or a question mark depends on words from much
+earlier in the sentence, not just the immediately preceding word.
+
+\subsubsection*{Shannon and the Entropy of Language}
+
+Thirty-five years after Markov, the American mathematician and electrical
+engineer Claude Shannon published \textit{A Mathematical Theory of
+Communication}~\cite{shannon1948}, one of the most consequential scientific
+papers of the twentieth century. Shannon was working on the problem of
+transmitting messages efficiently and reliably, and to do so he needed a
+rigorous way to measure the information content of a message.
+
+Shannon's central insight was that information is intimately connected to
+surprise: a symbol that is unlikely carries more information than a symbol that
+is expected. He formalized this intuition with the concept of \emph{entropy},
+which measures the average uncertainty in a probability distribution. For a
+random variable taking values in a vocabulary $\mathcal{V}$ with probabilities
+$p(v)$, the entropy is:
+
+\begin{equation}
+H = -\sum_{v \in \mathcal{V}} p(v) \log_2 p(v)
+\end{equation}
+
+Entropy is measured in bits when the logarithm is base 2. A fair coin has
+entropy of 1 bit (maximum uncertainty for a binary choice). English text has
+far less than the maximum possible entropy because the language is highly
+redundant --- knowing the preceding letters sharply constrains what comes next.
+
+To estimate the entropy of English, Shannon ran a now-famous experiment. He
+asked human subjects to guess the next letter in a passage of text, recording
+how many guesses it took them to get it right. When subjects had seen the
+preceding context, they could often guess correctly on the first try ---
+demonstrating that the conditional probability of the next letter given the
+context is very high for predictable letters, and lower for surprising ones.
+Shannon estimated the entropy of English at roughly 0.6 to 1.3 bits per letter,
+far below the 4.7 bits that would result if all 27 symbols (26 letters plus
+space) were equally likely.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.90\textwidth]{images/shannon_prediction.png}
+    \caption{Shannon's conditional probability view of language. Given the
+    context ``The cat sat on the '', the probability distribution over
+    the next word is highly concentrated: ``mat'' is very likely, ``floor''
+    is plausible, and ``banana'' has near-zero probability. The entropy of
+    this conditional distribution is low because the context is highly
+    informative. Modern language models learn precisely this conditional
+    distribution at scale.}
+    \label{fig:shannon_prediction}
+\end{figure}
+
+What Shannon gave us, beyond entropy, was a rigorous mathematical framework
+for conditional probability in language. The probability of any text sequence
+factorizes as:
+
+\begin{equation}
+p(\mathbf{z}) = \prod_{i=1}^{T} p(z_i \mid z_1, z_2, \ldots, z_{i-1})
+\end{equation}
+
+This is the \emph{chain rule of probability} applied to sequences. Unlike
+Markov's assumption, this factorization is exact --- it makes no approximation.
+The challenge is that computing $p(z_i \mid z_1, \ldots, z_{i-1})$ requires
+conditioning on an arbitrarily long history, which becomes intractable as
+sequences grow long. Shannon acknowledged this difficulty and proposed
+approximate methods, but the computational tools to solve it at scale did not
+yet exist.
+
+\subsubsection*{The Bridge to Modern Generative Models}
+
+Markov showed that sequences could be modeled with conditional probabilities.
+Shannon showed that language has a measurable statistical structure and that
+conditional probability is the right mathematical language for capturing it.
+Both were limited by the computational constraints of their era --- Markov by
+hand computation, Shannon by the early state of digital computing.
+
+Modern generative AI is, in a deep sense, the resolution of the problem both
+men identified: learning $p(z_i \mid z_1, \ldots, z_{i-1})$ from data at
+scale, without the Markov approximation, for sequences of arbitrary length.
+Where Markov used a table of transition probabilities between two symbol
+classes, a modern language model learns billions of parameters that encode
+conditional distributions over tens of thousands of vocabulary items given
+contexts of thousands of tokens. Where Shannon estimated entropy from human
+guessing experiments, modern models minimize cross-entropy loss over trillions
+of tokens of training data, directly optimizing the quantity Shannon defined.
+
+The mathematical form of the objective has not changed since Shannon wrote it
+down. What has changed is the capacity to approximate it --- from two-state
+Markov chains, through n-gram language models, to the transformer-based
+architectures described in Chapter~4.
 
 \subsection{The Unknown Data Distribution}
 
-The critical challenge of generative AI is that $p_{data}$ is unknown. We do not have a formula or explicit representation for the distribution of all meaningful text, all possible images, or all valid protein structures. This distribution is defined implicitly by what exists or what is meaningful:
+The critical challenge of generative AI is that $p_{data}$ is unknown. We do
+not have a closed-form expression for the distribution over all meaningful text,
+all coherent images, or all valid protein structures. This distribution is
+defined implicitly by what exists or what is meaningful:
 
-\textbf{Text:} $p_{data}$ represents the distribution over all text that is meaningful, grammatical, factual, or stylistically coherent according to human judgment. This includes all published books, articles, conversations, code, and creative writing—but weighted by frequency, quality, and other factors we cannot fully specify.
+\textbf{Text:} $p_{data}$ represents the distribution over all text that is
+grammatical, factual, stylistically coherent, or otherwise meaningful by human
+standards --- encompassing books, articles, code, conversations, and creative
+writing in all their variety.
 
-\textbf{Images:} $p_{data}$ represents all real or imagined images that humans would consider coherent, aesthetically pleasing, or depicting recognizable objects and scenes. This encompasses photographs of the real world, artistic creations, scientific visualizations, and everything in between.
+\textbf{Images:} $p_{data}$ represents all images that humans would recognize
+as coherent --- photographs of the real world, artistic creations, scientific
+visualizations, and everything in between.
 
-\textbf{Videos:} $p_{data}$ covers all real or imagined videos showing coherent motion, physical plausibility, and narrative or documentary content that makes sense to human viewers.
+\textbf{Molecular structures:} $p_{data}$ represents all molecular
+configurations admissible by the laws of physics and chemistry --- structures
+that are stable, energetically favorable, and chemically relevant.
 
-\textbf{Molecular structures:} $p_{data}$ represents all molecular configurations admissible by the laws of physics and chemistry—structures that are stable, energetically favorable, and biologically or chemically relevant.
-
-The unknown nature of $p_{data}$ is what makes generative AI both challenging and necessary. If we had an explicit formula for $p_{data}$, we could sample from it directly. Instead, we must approximate it by learning from examples.
+The unknown nature of $p_{data}$ is what makes generative AI both challenging
+and necessary. If we had an explicit formula for $p_{data}$, we could sample
+from it directly. Instead, we must approximate it by learning from examples.
 
 \subsection{Unconditional Generation}
 
-When we sample from $p_{data}$ without any additional information or constraints, we perform \textbf{unconditional generation}:
+When we sample from $p_{data}$ without any additional constraints, we perform
+\textbf{unconditional generation}:
 
 \begin{equation}
 \mathbf{z} \sim p_{data}
 \end{equation}
 
-Unconditional generation produces outputs that are typical of the data distribution but not directed toward any particular goal or specification.
-
-\textbf{Examples of unconditional generation:}
-\begin{itemize}
-\item A language model generating random text without a prompt
-\item An image model creating arbitrary images without guidance
-\item A music generation model composing without stylistic constraints
-\end{itemize}
-
-In practice, purely unconditional generation is less common than conditional generation because users typically want to control or guide the output. However, unconditional generation is theoretically important and serves as the foundation for understanding conditional generation.
-
-Early generative models like vanilla Generative Adversarial Networks (GANs) and Variational Autoencoders (VAEs) often focused on unconditional generation—learning to sample from $p_{data}$ without conditioning. While impressive, these models had limited practical utility compared to modern conditional models that allow users to specify what they want generated.
+Unconditional generation produces outputs that are typical of the data
+distribution but not directed toward any particular goal. Early generative
+models often focused on unconditional generation --- demonstrating that a model
+had learned the distribution --- before conditional generation became the
+dominant practical paradigm.
 
 \subsection{Quality and Diversity}
 
-When sampling from $p_{data}$, we ideally want two properties:
+When sampling from $p_{data}$, two properties matter:
 
-\textbf{Quality (Fidelity):} Samples should be realistic, coherent, and indistinguishable from real examples drawn from the true $p_{data}$. Low-quality samples exhibit artifacts, inconsistencies, or nonsensical content.
+\textbf{Quality (fidelity):} Samples should be realistic and coherent ---
+indistinguishable from examples drawn from the true $p_{data}$. Low-quality
+samples exhibit artifacts, inconsistencies, or nonsensical content.
 
-\textbf{Diversity (Coverage):} Samples should cover the full range of $p_{data}$, not concentrating on a small subset. A model with poor diversity might generate many variations of the same image or repeatedly produce similar text.
+\textbf{Diversity (coverage):} Samples should span the full range of $p_{data}$,
+not concentrate on a narrow subset. A model with poor diversity might generate
+many near-identical outputs, effectively ignoring large regions of the
+distribution.
 
-These properties can trade off: increasing quality sometimes reduces diversity (the model ``plays it safe'' by generating only high-confidence outputs), while increasing diversity can reduce quality (the model ventures into less-certain regions of the distribution). Balancing this trade-off is a key challenge in generative modeling.
+These properties trade off in practice. A model that ``plays it safe'' by
+generating only high-confidence outputs may achieve high quality at the expense
+of diversity. A model that explores the full distribution may occasionally
+produce low-quality samples. This tension connects directly to how generative
+models are evaluated, which we return to in Section~\ref{sec:evaluation}.
 
 \section{Conditional Generation}
 
-\subsection{Definition and Motivation}
+\subsection{Definition and the Conditional Distribution}
 
-Most practical applications of generative AI require \textbf{conditional generation}—generating content that satisfies specified conditions or constraints. Instead of sampling from the unconditional distribution $p_{data}$, we sample from a conditional distribution given some conditioning variable $\mathbf{y}$:
-
-\begin{equation}
-\mathbf{z} \sim p_{data}(\cdot | \mathbf{y})
-\end{equation}
-
-This notation means we sample $\mathbf{z}$ from the data distribution conditioned on observing $\mathbf{y}$. The conditioning variable $\mathbf{y}$ is typically a vector of real numbers:
+Most practical applications of generative AI require \textbf{conditional
+generation} --- producing content that satisfies a specified condition. Instead
+of sampling from the unconditional distribution $p_{data}$, we sample from a
+conditional distribution given some conditioning variable $\mathbf{y}$:
 
 \begin{equation}
-\mathbf{y} \in \mathbb{R}^k
+\mathbf{z} \sim p_{data}(\cdot \mid \mathbf{y})
 \end{equation}
 
-where $k$ is the dimension of the conditioning information.
+The conditioning variable $\mathbf{y} \in \mathbb{R}^k$ is typically a vector
+encoding a user's prompt, a reference image, a constraint, or any other
+information that should guide generation.
 
-Conditioning enables controlled generation: users specify what they want through $\mathbf{y}$, and the model generates appropriate $\mathbf{z}$ consistent with that specification.
-
-\subsection{Conditioning for Text Generation}
-
-For text generation, the conditioning variable $\mathbf{y}$ is typically:
-
-\textbf{Text prompts:} A sequence of tokens representing the user's instruction, question, or partial text to continue. For example, ``Write a poem about autumn'' becomes a sequence of token embeddings that condition the model's generation.
-
-\textbf{Multimodal prompts:} Modern language models can be conditioned on both text and images. For example, providing an image of a chart along with the text ``Explain this figure'' allows the model to generate a description based on both modalities.
-
-The conditioning text is encoded into a sequence of vectors (embeddings), which the model uses to contextualize its generation. At each step, the model predicts the next token based on both the previous tokens it has generated and the original conditioning information.
-
-\textbf{Example:} Given the prompt ``The capital of France is'', the model samples from $p_{data}(\cdot | \mathbf{y})$ where $\mathbf{y}$ represents the prompt. High-probability continuations include ``Paris'', ``the city of Paris'', etc. Low-probability continuations like ``Tokyo'' or ``banana'' are less likely to be sampled.
-
-\subsection{Conditioning for Image Generation}
-
-Image generation models accept diverse conditioning inputs:
-
-\textbf{Text prompts:} Descriptions like ``a serene mountain landscape at sunset, oil painting style'' guide the model to generate images matching that description. The text is encoded into embeddings that influence the generation process.
-
-\textbf{Image prompts:} Techniques like img2img allow conditioning on a reference image. The model might generate variations, higher-resolution versions, or stylistic transformations of the input image.
-
-\textbf{Multimodal prompts:} Combining text and image conditioning enables sophisticated control. For example, ``make this photo look like a watercolor painting'' uses both the input image and the text instruction.
-
-\textbf{Spatial conditioning:} Some models accept spatial masks, sketches, or edge maps that specify the rough layout or composition of the desired image.
-
-The conditioning information $\mathbf{y}$ is processed by the model's conditioning encoder, producing a representation that guides the diffusion or flow process toward outputs consistent with the specification.
-
-\subsection{Conditioning for Video Generation}
-
-Video generation extends image conditioning with temporal specifications:
-
-\textbf{Text prompts:} Descriptions like ``a cat walking through a garden, smooth camera motion'' specify both content and dynamics.
-
-\textbf{Image-to-video:} An initial frame or set of frames serves as conditioning, and the model generates subsequent frames showing plausible motion and evolution.
-
-\textbf{Video-to-video:} Transforming existing videos (e.g., changing artistic style while preserving motion).
-
-The temporal dimension adds complexity: the model must generate coherent motion, maintain object permanence, and respect physical constraints like gravity and collision.
-
-\subsection{Conditioning for Molecular Structure Generation}
-
-In computational biology, conditioning typically involves:
-
-\textbf{Amino acid sequences:} For protein structure prediction, the sequence of amino acids (primary structure) serves as conditioning. Models like AlphaFold3 predict the 3D coordinates of all atoms given this sequence.
-
-\textbf{Functional constraints:} Specifying desired properties (binding affinity, stability, enzymatic activity) can condition the generation toward molecules with those characteristics.
-
-\textbf{Partial structures:} Providing part of a structure and asking the model to complete or refine it.
-
-The conditioning encodes both the chemical identity of components and any constraints or objectives for the generated structure.
-
-\subsection{Mathematical Formulation of Conditioning}
-
-Conditional probability distributions satisfy important properties. By Bayes' theorem:
+Before proceeding to examples, it is worth understanding what a conditional
+probability distribution \emph{means}. The conditional distribution
+$p_{data}(\mathbf{z} \mid \mathbf{y})$ answers the question: among all outputs
+$\mathbf{z}$ that could plausibly be generated, which are consistent with the
+condition $\mathbf{y}$? By Bayes' theorem:
 
 \begin{equation}
-p_{data}(\mathbf{z} | \mathbf{y}) = \frac{p_{data}(\mathbf{z}, \mathbf{y})}{p_{data}(\mathbf{y})}
+p_{data}(\mathbf{z} \mid \mathbf{y})
+    = \frac{p_{data}(\mathbf{z},\, \mathbf{y})}{p_{data}(\mathbf{y})}
 \end{equation}
 
-The conditional distribution represents how likely $\mathbf{z}$ is given that we've observed $\mathbf{y}$. High-probability $\mathbf{z}$ are those that co-occur frequently with $\mathbf{y}$ in the data distribution.
+Outputs $\mathbf{z}$ that co-occur frequently with $\mathbf{y}$ in the data
+distribution receive high conditional probability; outputs that rarely or never
+co-occur with $\mathbf{y}$ receive low conditional probability. Given the prompt
+``The capital of France is'', for instance, the token ``Paris'' co-occurs with
+that context far more often than ``Tokyo'' or ``banana'' in any large text
+corpus, so $p_{data}(\text{Paris} \mid \text{``The capital of France is''})$
+is very high.
 
-The marginal distribution can be recovered by integrating over all possible conditioning variables:
+The unconditional distribution can always be recovered by averaging over all
+possible conditioning values:
 
 \begin{equation}
-p_{data}(\mathbf{z}) = \int p_{data}(\mathbf{z} | \mathbf{y}) p_{data}(\mathbf{y}) \, d\mathbf{y}
+p_{data}(\mathbf{z})
+    = \int p_{data}(\mathbf{z} \mid \mathbf{y})\, p_{data}(\mathbf{y})\, d\mathbf{y}
 \end{equation}
 
-This shows that unconditional generation can be viewed as conditional generation where we first sample $\mathbf{y}$ from $p_{data}(\mathbf{y})$, then sample $\mathbf{z}$ given that $\mathbf{y}$.
+In practice, conditioning variables and generated outputs are never explicitly
+computed as probability values. Instead, neural networks learn to approximate
+$p_{data}(\mathbf{z} \mid \mathbf{y})$ from training data, and generation is
+implemented through iterative procedures that produce samples from the learned
+approximation.
 
-In practice, we never compute these distributions explicitly. Instead, neural networks learn to approximate $p_{data}(\mathbf{z} | \mathbf{y})$ from training data, and sampling involves iterative procedures (for diffusion models) or autoregressive token prediction (for language models).
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/conditional_generation.png}
+    \caption{Unconditional versus conditional generation. Left: sampling from
+    the full data distribution $p_{data}$ produces varied outputs with no
+    particular direction. Right: conditioning on $\mathbf{y}$ (a text prompt,
+    an image, or any other signal) concentrates the distribution on outputs
+    consistent with that condition, allowing users to guide generation toward
+    desired content.}
+    \label{fig:conditional_generation}
+\end{figure}
+
+\subsection{Conditioning Across Modalities}
+
+The mathematical form $p_{data}(\mathbf{z} \mid \mathbf{y})$ is the same
+regardless of modality. What varies is the nature of $\mathbf{z}$ (the output)
+and $\mathbf{y}$ (the condition). Table~\ref{tab:conditioning} summarizes the
+principal conditioning patterns across modalities.
+
+\begin{table}[htbp]
+\centering
+\caption{Conditioning patterns across generative AI modalities. In every case
+the conditioning variable $\mathbf{y}$ is encoded into a vector and used to
+restrict the output distribution to content consistent with the condition.}
+\label{tab:conditioning}
+\begin{tabular}{lll}
+\hline
+\textbf{Output modality} & \textbf{Conditioning variable $\mathbf{y}$} &
+\textbf{Example} \\
+\hline
+Text ($\mathbf{z} \in \mathbb{N}^d$)
+    & Text prompt
+    & ``Explain quantum entanglement'' \\
+    & Image + text
+    & Chart image + ``Summarize this figure'' \\
+\hline
+Image ($\mathbf{z} \in \mathbb{R}^{H \times W \times 3}$)
+    & Text description
+    & ``A mountain lake at dusk, oil painting'' \\
+    & Reference image
+    & Input photo + ``Make this a watercolor'' \\
+    & Spatial mask
+    & Segmentation map specifying layout \\
+\hline
+Video ($\mathbf{z} \in \mathbb{R}^{T \times H \times W \times 3}$)
+    & Text prompt
+    & ``A cat walking through a garden'' \\
+    & Initial frame(s)
+    & First frame + ``Animate this image'' \\
+\hline
+Molecule ($\mathbf{z} \in \mathbb{R}^{N \times 3}$)
+    & Amino acid sequence
+    & Protein sequence → 3D structure \\
+    & Functional constraints
+    & Target binding affinity, stability \\
+\hline
+\end{tabular}
+\end{table}
+
+In all cases, the conditioning variable is encoded into a numerical
+representation --- a sequence of token embeddings for text prompts, a vector of
+image features for reference images, a one-hot or learned embedding for discrete
+constraints --- and this representation is provided to the model alongside the
+generation process.
 
 \section{Training Datasets and Learning Data Distributions}
 
 \subsection{The Role of Training Data}
 
-Since $p_{data}$ is unknown, we approximate it by learning from examples—a training dataset. The training dataset consists of $N$ samples drawn randomly from the true data distribution:
+Since $p_{data}$ is unknown, we approximate it by learning from examples. The
+training dataset consists of $N$ samples drawn from the true data distribution:
 
 \begin{equation}
 \mathbf{z}_1, \mathbf{z}_2, \ldots, \mathbf{z}_N \sim p_{data}
 \end{equation}
 
-These samples are assumed to be independent and identically distributed (i.i.d.), meaning each is drawn independently from the same distribution $p_{data}$.
+These samples are assumed to be independent and identically distributed
+(i.i.d.) --- each drawn independently from the same $p_{data}$. The central
+assumption of statistical learning applies: with enough representative samples,
+we can learn a good approximation to $p_{data}$ that generalizes to new samples
+not in the training set.
 
-The central assumption of machine learning applies: if we have enough representative samples from $p_{data}$, we can learn a good approximation to $p_{data}$ that generalizes to new samples not in the training set.
+For conditional models, training data consists of pairs $(\mathbf{z}_i,
+\mathbf{y}_i)$ --- outputs paired with their conditions. For example, a
+text-to-image model trains on (image, caption) pairs; a protein structure model
+trains on (structure, sequence) pairs. The quality and coverage of these pairs
+determines how well the model learns $p_{data}(\mathbf{z} \mid \mathbf{y})$.
 
 \subsection{Training Data Sources by Modality}
 
-The source of training data varies by modality:
+Training data sources vary by modality and scale:
 
-\textbf{Text:} Training datasets for language models include web-scraped text from the internet, digitized books, scientific papers, code repositories (like GitHub), and conversational data. Datasets often contain trillions of tokens.
+\textbf{Text:} Language model training datasets include web-scraped text,
+digitized books, scientific papers, code repositories, and conversational data.
+Modern large language models train on trillions of tokens. Scale has grown
+rapidly: models from 2020 trained on hundreds of billions of tokens; those from
+2024--2025 train on ten trillion or more.
 
-Notable text datasets include Common Crawl (web scrapes), The Pile (diverse text collection), and proprietary datasets assembled by companies like Anthropic, OpenAI, and Google. Quality and diversity of training data critically impact model capabilities.
+\textbf{Images:} Image generation models train on billions of image-text pairs
+scraped from the internet. Data quality varies enormously, from professional
+photography to amateur snapshots. Careful curation --- filtering duplicates,
+removing low-quality content, balancing topics --- is as important as scale.
 
-\textbf{Images:} Image generation models train on billions of images scraped from the internet, often paired with captions or alt-text. Datasets include LAION-5B (5 billion image-text pairs), ImageNet (14 million labeled images), and proprietary collections.
+\textbf{Video:} Video datasets are substantially smaller than image datasets due
+to storage and processing costs, and temporal consistency requirements make
+curation more demanding. Models train on clips from diverse sources including
+web video, films, and domain-specific recordings.
 
-Data quality varies enormously, from professional photography to amateur snapshots to artistic creations. Models learn to generate all styles represented in the training data.
-
-\textbf{Videos:} Video datasets are smaller due to storage and processing costs. They include YouTube videos (with transcripts as conditioning), movie clips, and specialized datasets for specific domains (sports, nature documentaries, etc.).
-
-\textbf{Molecular structures:} The Protein Data Bank (PDB) contains experimentally determined protein structures—currently over 200,000 structures. While smaller than text or image datasets, each structure provides rich 3D information. Models also train on predicted structures and molecular simulations.
+\textbf{Molecular structures:} The Protein Data Bank (PDB) contains over
+200,000 experimentally determined protein structures. While small by text or
+image standards, each structure provides rich three-dimensional information.
+Models also train on computationally predicted structures and molecular
+dynamics simulations.
 
 \subsection{Dataset Size and Quality}
 
-The scale of training datasets has grown exponentially:
+Scale and quality both matter. Larger datasets generally improve performance,
+but a curated dataset of high-quality examples may outperform a larger dataset
+contaminated with spam, misinformation, or near-duplicates. Key curation
+strategies include:
 
-\textbf{Early neural language models (2010s):} Millions to billions of tokens
-
-\textbf{GPT-3 (2020):} 300 billion tokens
-
-\textbf{Modern large language models (2024-2025):} 1-10+ trillion tokens
-
-Larger datasets generally improve performance, but quality matters as much as quantity. A curated dataset of high-quality text may outperform a larger dataset contaminated with spam, misinformation, or low-quality content.
-
-\textbf{Data curation strategies:}
 \begin{itemize}
-\item Filtering for quality (removing spam, duplicates, machine-generated text)
-\item Balancing domains (ensuring representation across topics, languages, styles)
-\item Deduplication (removing near-duplicates that would cause memorization)
-\item Safety filtering (removing harmful content)
-\item Demographic balancing (ensuring diverse representation)
+\item \textbf{Quality filtering:} Removing spam, machine-generated text,
+      and low-coherence content
+\item \textbf{Deduplication:} Removing near-identical examples that would
+      cause the model to memorize rather than generalize
+\item \textbf{Domain balancing:} Ensuring broad representation across topics,
+      languages, styles, and domains
+\item \textbf{Safety filtering:} Removing harmful, abusive, or
+      privacy-violating content
 \end{itemize}
 
-For conditional generation, datasets must contain pairs $(\mathbf{z}, \mathbf{y})$ of outputs and conditioning information. For example:
-\begin{itemize}
-\item Text-image pairs: images with captions for text-to-image models
-\item Instruction-response pairs: prompts and desired completions for instruction-tuned language models
-\item Sequence-structure pairs: amino acid sequences and protein structures for AlphaFold
-\end{itemize}
+\subsection{From Data to Learned Distribution}
 
-The quality and coverage of these pairs determines how well the model learns the conditional distribution $p_{data}(\mathbf{z} | \mathbf{y})$.
-
-\subsection{From Data to Distribution}
-
-Training a generative model involves:
+Training a generative model transforms a finite collection of examples into a
+continuous probability distribution $p_{model}$ that approximates $p_{data}$.
+The process involves five steps:
 
 \begin{enumerate}
-\item \textbf{Collect training data:} Assemble $\mathbf{z}_1, \ldots, \mathbf{z}_N$ from $p_{data}$ (or $(\mathbf{z}_1, \mathbf{y}_1), \ldots, (\mathbf{z}_N, \mathbf{y}_N)$ for conditional models)
+\item \textbf{Collect and curate training data:} Assemble examples from
+      $p_{data}$, apply quality filters, and construct conditioning pairs
+      where needed.
 
-\item \textbf{Define model architecture:} Choose a neural network structure (transformer for text, U-Net for images, etc.)
+\item \textbf{Define a model architecture:} Choose a neural network structure
+      capable of representing the learned distribution (discussed in
+      Chapter~4).
 
-\item \textbf{Define objective function:} Specify a loss that measures how well the model approximates $p_{data}$. Common objectives include:
-   \begin{itemize}
-   \item Cross-entropy loss for language models (measures prediction error)
-   \item Denoising loss for diffusion models (measures reconstruction error)
-   \item Adversarial loss for GANs (measures discriminability from real data)
-   \end{itemize}
+\item \textbf{Define a training objective:} Specify a loss function that
+      measures how well $p_{model}$ approximates $p_{data}$. Common choices
+      include cross-entropy loss for autoregressive models (minimizing the
+      average negative log-probability assigned to training examples) and
+      denoising loss for flow-based models.
 
-\item \textbf{Optimize parameters:} Use gradient descent to adjust the model's billions of parameters to minimize the loss on the training data
+\item \textbf{Optimize model parameters:} Use gradient descent to adjust the
+      model's parameters --- ranging from millions to hundreds of billions ---
+      to minimize the training loss.
 
-\item \textbf{Validate generalization:} Test on held-out data to ensure the model generalizes beyond memorizing training examples
+\item \textbf{Validate generalization:} Evaluate on held-out data to confirm
+      the model approximates $p_{data}$ rather than memorizing training
+      examples.
 \end{enumerate}
 
-The resulting trained model defines an approximation to $p_{data}$, which we can denote $p_{model}$. When we generate from a trained model, we're actually sampling from $p_{model}$, which ideally closely approximates $p_{data}$.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.90\textwidth]{images/training_pipeline.png}
+    \caption{The training pipeline for a generative model. A finite training
+    dataset $\{\mathbf{z}_i\}$ sampled from the unknown $p_{data}$ is used to
+    optimize the model's parameters until the learned distribution $p_{model}$
+    closely approximates $p_{data}$. The gap between $p_{model}$ and $p_{data}$
+    --- the approximation error --- determines where the model fails: outputs
+    in regions of $p_{data}$ not well covered by training data will be
+    generated poorly or not at all.}
+    \label{fig:training_pipeline}
+\end{figure}
 
-The quality of $p_{model}$ depends on:
-\begin{itemize}
-\item \textbf{Dataset quality and coverage:} Does training data represent the true $p_{data}$?
-\item \textbf{Model capacity:} Is the neural network large and flexible enough?
-\item \textbf{Training procedure:} Does optimization effectively learn the distribution?
-\item \textbf{Objective function:} Does the loss encourage learning the right distribution?
-\end{itemize}
-
-No model perfectly captures $p_{data}$—there is always approximation error. But modern large-scale models achieve remarkably good approximations, producing outputs often indistinguishable from training data.
-
-\section{State-of-the-Art Generative AI Models}
-
-\subsection{Multimodal Large Language Models}
-
-The current generation of text generation models combines language understanding with multimodal capabilities:
-
-\textbf{Open-source models:}
-\begin{itemize}
-\item \textbf{Llama (Meta):} Family of decoder-only transformers ranging from 7B to 405B parameters, trained on 15+ trillion tokens
-\item \textbf{Mistral and Mixtral (Mistral AI):} Efficient models using mixture-of-experts (MoE) architecture
-\item \textbf{DeepSeek:} Series of models with innovative architectural choices
-\item \textbf{Pixtral:} Multimodal model accepting both text and images
-\item \textbf{LLaVA:} Vision-language model for image understanding and description
-\end{itemize}
-
-\textbf{Proprietary models:}
-\begin{itemize}
-\item \textbf{Amazon Nova (Micro/Lite/Pro/Premier):} Multimodal models across different capability and efficiency tiers
-\item \textbf{GPT-4 (OpenAI):} Large multimodal model with extensive capabilities
-\item \textbf{Claude (Anthropic):} Models optimized for helpfulness, harmlessness, and honesty
-\item \textbf{Gemini (Google):} Multimodal models with strong reasoning capabilities
-\end{itemize}
-
-These models share common architectural elements:
-\begin{itemize}
-\item Transformer-based architectures with self-attention mechanisms
-\item Autoregressive generation (predicting one token at a time)
-\item Massive scale (billions to hundreds of billions of parameters)
-\item Pretraining on diverse text corpora
-\item Fine-tuning for instruction following and safety
-\end{itemize}
-
-\subsection{Flow and Diffusion Models for Images}
-
-Image generation has been revolutionized by diffusion and flow-based models:
-
-\textbf{Diffusion models:}
-\begin{itemize}
-\item \textbf{Stable Diffusion 3.5 (Stability AI):} Open-source text-to-image model using latent diffusion with transformer backbone
-\item \textbf{DALL-E 3 (OpenAI):} Proprietary diffusion model with strong prompt following
-\item \textbf{Midjourney:} Proprietary model known for artistic and aesthetic outputs
-\item \textbf{Amazon Nova Canvas:} Multimodal image generation with fine-grained control
-\end{itemize}
-
-\textbf{Flow models:}
-\begin{itemize}
-\item Emerging architecture that models the transformation from noise to data as a continuous flow
-\item Often faster than diffusion models while maintaining quality
-\item Used in recent iterations of Stable Diffusion and other systems
-\end{itemize}
-
-These models generate images by iteratively refining random noise into coherent images, guided by text prompts encoded by language models like CLIP or T5.
-
-\subsection{Video Generation Models}
-
-Video generation extends image generation with temporal consistency:
-
-\textbf{Diffusion-based video models:}
-\begin{itemize}
-\item \textbf{Stable Video Diffusion (Stability AI):} Extends Stable Diffusion to video
-\item \textbf{Sora (OpenAI):} Proprietary video generation with impressive length and quality
-\item \textbf{Amazon Nova Reel:} Video generation with control over motion and composition
-\end{itemize}
-
-\textbf{Challenges in video generation:}
-\begin{itemize}
-\item Temporal consistency: maintaining object identity across frames
-\item Physical plausibility: respecting physics and natural motion
-\item Computational cost: generating even short clips requires enormous computation
-\item Dataset scarcity: fewer high-quality video datasets than images
-\end{itemize}
-
-Current models can generate clips of a few seconds to a few minutes, with ongoing research pushing toward longer, higher-quality outputs.
-
-\subsection{Molecular Structure Generation}
-
-Protein structure prediction has achieved remarkable breakthroughs:
-
-\textbf{AlphaFold3 (Google DeepMind):}
-\begin{itemize}
-\item Predicts protein structures from amino acid sequences
-\item Achieves near-experimental accuracy on many proteins
-\item Uses attention mechanisms and geometric reasoning
-\item Extended to predict protein-ligand complexes, nucleic acids, and other biomolecules
-\end{itemize}
-
-\textbf{ESMFold (Meta):}
-\begin{itemize}
-\item Language model approach to protein structure prediction
-\item Trained on evolutionary data (protein sequences)
-\item Faster than AlphaFold3, enabling large-scale structural predictions
-\end{itemize}
-
-\textbf{Impact on science:}
-These models have predicted structures for hundreds of millions of proteins, dramatically accelerating biological research and drug discovery. The ability to generate accurate 3D structures from sequences alone would have seemed impossible a decade ago.
-
-\subsection{Architectural Commonalities}
-
-Despite diverse modalities, state-of-the-art generative models share architectural principles:
-
-\textbf{Attention mechanisms:} Nearly all modern generative models use attention (especially self-attention from transformers) to capture long-range dependencies and relationships.
-
-\textbf{Scale:} Bigger models trained on more data generally perform better, following scaling laws that predict performance improvements with increased compute.
-
-\textbf{Conditioning:} Modern models are almost always conditional, accepting prompts, reference data, or constraints.
-
-\textbf{Iterative refinement:} Many models generate through iterative processes—autoregressive token prediction for text, denoising steps for diffusion models, flow integration for flow models.
-
-\textbf{Learned representations:} Models learn rich internal representations (embeddings, latent codes) that capture semantic and structural information.
+The resulting $p_{model}$ is never a perfect replica of $p_{data}$ --- there is
+always approximation error arising from finite data, limited model capacity, and
+imperfect optimization. Understanding where $p_{model}$ deviates from $p_{data}$
+--- which regions of the distribution the model covers well and which it covers
+poorly --- is essential for understanding when and why generative models
+fail.
 
 \section{The Generative AI Pipeline}
 
 \subsection{From Training to Generation}
 
-The complete pipeline for deploying a generative AI system involves several stages:
+The complete pipeline for a generative AI system spans data collection to user
+interaction:
 
 \begin{enumerate}
-\item \textbf{Data collection and curation:} Assemble training data from appropriate sources, filter for quality, remove harmful content
+\item \textbf{Data collection and curation:} Assemble training data, filter
+      for quality, remove harmful content, and pair outputs with conditions
+      where applicable.
 
-\item \textbf{Preprocessing:} Tokenize text, resize and normalize images, augment data to increase diversity
+\item \textbf{Preprocessing:} Tokenize text, normalize and resize images,
+      augment data to increase effective diversity.
 
-\item \textbf{Model architecture design:} Choose appropriate architecture (transformer for text, U-Net for images, etc.)
+\item \textbf{Pretraining:} Train the base model on the large-scale dataset
+      to learn $p_{model} \approx p_{data}$.
 
-\item \textbf{Pretraining:} Train the base model on the large-scale dataset to learn the data distribution
+\item \textbf{Fine-tuning (optional):} Further train on curated high-quality
+      data or task-specific examples to specialize the model.
 
-\item \textbf{Fine-tuning (optional):} Further train on curated high-quality data or instruction-following examples
+\item \textbf{Alignment (optional):} Use techniques such as reinforcement
+      learning from human feedback (RLHF) to align model outputs with human
+      preferences and safety requirements.
 
-\item \textbf{Alignment (optional):} Use techniques like RLHF (Reinforcement Learning from Human Feedback) to align model behavior with human preferences
+\item \textbf{Inference optimization:} Quantize, distill, or otherwise
+      compress the model for efficient generation at deployment scale.
 
-\item \textbf{Inference optimization:} Optimize the model for efficient generation (quantization, distillation, optimized kernels)
+\item \textbf{Deployment:} Serve the model via APIs or local deployment,
+      managing latency, throughput, and cost.
 
-\item \textbf{Deployment:} Serve the model via APIs or local deployment, handling scaling, latency, and cost constraints
-
-\item \textbf{User interaction:} Accept prompts, generate outputs, potentially refine based on feedback
+\item \textbf{User interaction:} Accept prompts $\mathbf{y}$, sample
+      $\mathbf{z} \sim p_{model}(\cdot \mid \mathbf{y})$, and return the
+      generated output.
 \end{enumerate}
 
-Each stage presents engineering and research challenges. The field continues to innovate in all areas, from more efficient architectures to better training procedures to novel alignment techniques.
+Each stage presents its own engineering and research challenges, and the field
+continues to innovate in all of them.
 
-\subsection{Evaluation Challenges}
+\section{Model Families}
 
-Evaluating generative models presents a significant challenge because ``quality'' is inherently subjective and multidimensional. Unlike discriminative tasks where accuracy is binary, generative evaluation must balance statistical fidelity with human perception and functional utility.
+Modern generative AI systems fall into two broad architectural families,
+distinguished by how they represent and sample from $p_{model}$.
 
-For text generation, evaluation has moved beyond simple n-gram overlap metrics like BLEU or ROUGE, which correlate poorly with human judgment in open-ended tasks. Instead, researchers focus on distinct dimensions such as fluency and coherence, often measured via perplexity or large-scale benchmarks like HELM \cite{liang2022helm}. However, the most critical modern challenges are factuality and usefulness. Metrics have been developed specifically to detect hallucinations and measure truthfulness \cite{lin2021truthfulqa}, while alignment with user intent is typically assessed through expensive human preference studies or proxy reward models \cite{ouyang2022training}.
+\subsection{Transformer-Based Autoregressive Models}
 
-In the domain of image generation, the evaluation criteria shift toward perceptual realism and semantic control. The standard metric for assessing realism and diversity is the Fr\'{e}chet Inception Distance (FID), which measures the distributional distance between generated and real images in a deep feature space \cite{heusel2017gans}. However, FID does not capture how well an image matches its input description. To address this, prompt adherence is evaluated using multi-modal metrics like CLIPScore, which calculates the cosine similarity between the generated image and the text prompt embeddings \cite{hessel2021clipscore}.
+Transformer-based models~\cite{vaswani2017attention} decompose the joint
+distribution over a sequence using the chain rule of probability ---
+the same factorization that Shannon wrote down in 1948:
 
-For scientific applications such as molecular structure generation, evaluation is grounded in physical constraints rather than aesthetics. Models must ensure physical validity, meaning outputs must respect valency rules and realistic bond angles. Beyond simple validity, the utility of a model is judged by its ability to optimize for specific properties, such as drug-likeness or binding affinity \cite{gomez2018automatic}. Benchmarking suites like GuacaMol have been established to rigorously compare models on their ability to generate novel, stable, and functionally relevant chemical structures \cite{brown2019guacamol}.
+\begin{equation}
+p_{model}(\mathbf{z})
+    = \prod_{i=1}^{T} p_{model}(z_i \mid z_1, \ldots, z_{i-1})
+\end{equation}
 
-Ultimately, no single metric perfectly captures quality. Evaluation often requires a composite approach, combining automatic metrics (e.g., Perplexity, FID, RMSD) with human expert review to fully characterize model performance.
+Generation proceeds one element at a time, left to right: the model samples
+$z_1$, then samples $z_2$ given $z_1$, then $z_3$ given $z_1, z_2$, and so
+on. At each step, the transformer architecture computes the conditional
+distribution $p_{model}(z_i \mid z_1, \ldots, z_{i-1})$ by attending to all
+previous elements simultaneously --- overcoming the limitation of Markov's
+one-step memory by conditioning on the full history.
+
+This autoregressive approach applies naturally to any discrete sequence:
+text tokens, image tokens, audio tokens, or any other modality whose outputs
+can be represented as a sequence drawn from a finite vocabulary. Chapter~4
+describes the transformer architecture that makes this computation tractable
+at scale.
+
+\subsection{Flow-Based Generative Models}
+
+Flow-based models take a fundamentally different approach. Rather than
+factorizing the distribution autoregressively, they learn a continuous
+transformation $F_\theta$ that maps a simple source distribution (typically
+Gaussian noise $\mathbf{\epsilon} \sim \mathcal{N}(0, \mathbf{I})$) to the
+data distribution $p_{data}$:
+
+\begin{equation}
+\mathbf{z} = F_\theta(\mathbf{\epsilon}), \qquad \mathbf{\epsilon} \sim
+\mathcal{N}(0, \mathbf{I})
+\end{equation}
+
+Generation is a single forward pass through $F_\theta$: sample noise, apply
+the learned transformation, obtain a data sample. Training learns $F_\theta$
+such that the distribution of $F_\theta(\mathbf{\epsilon})$ matches $p_{data}$.
+
+In practice, $F_\theta$ is typically decomposed into a sequence of $T$
+incremental steps, each making a small adjustment to the current sample:
+
+\begin{equation}
+\mathbf{z}_T = \mathbf{z}_0 + \int_0^T v_\theta(\mathbf{z}_t, t)\, dt
+\end{equation}
+
+where $v_\theta$ is a learned velocity field and $\mathbf{z}_0 = \mathbf{\epsilon}$
+is the initial noise. The model learns to follow a flow from noise to data.
+\emph{Diffusion models} are a closely related family that parameterize the
+same transformation through a denoising process rather than a continuous flow;
+they belong to the same broad genre and share the noise-to-data generation
+paradigm.
+
+Flow-based models excel at generating continuous, high-dimensional outputs
+such as images and video, where the autoregressive token-by-token approach
+would be prohibitively slow or would require lossy discretization.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{images/model_families.png}
+    \caption{The two principal generative model families. Left: transformer-based
+    autoregressive models generate sequences one token at a time, each conditioned
+    on all previous tokens, following the chain rule of probability from left to
+    right. Right: flow-based models learn a continuous transformation from
+    Gaussian noise to the data distribution, generating the full output in a
+    fixed number of iterative refinement steps from noise toward a coherent
+    image or other continuous output.}
+    \label{fig:model_families}
+\end{figure}
+
+\section{Evaluation Challenges}
+\label{sec:evaluation}
+
+Evaluating generative models presents a fundamental challenge because
+``quality'' is inherently subjective and multidimensional. Unlike discriminative
+tasks where accuracy has a clear binary definition, generative evaluation must
+balance statistical fidelity with human perception and functional utility.
+
+\textbf{Text generation.} Evaluation has moved beyond simple overlap metrics
+like BLEU or ROUGE, which correlate poorly with human judgment on open-ended
+tasks. Modern evaluation focuses on distinct dimensions: fluency and coherence
+(measured via perplexity or large-scale benchmarks such as
+HELM~\cite{liang2022helm}), factual accuracy (with metrics designed specifically
+to detect hallucinations~\cite{lin2021truthfulqa}), and alignment with user
+intent (typically assessed through human preference studies or reward
+models~\cite{ouyang2022training}).
+
+\textbf{Image generation.} The standard metric for realism and diversity is the
+Fr\'{e}chet Inception Distance (FID), which measures the distributional
+distance between generated and real images in a deep feature
+space~\cite{heusel2017gans}. FID captures the quality-diversity tradeoff
+introduced in Section~3.3 --- a model that generates only a few high-quality
+images scores poorly on FID because the generated distribution does not cover
+$p_{data}$. Prompt adherence is evaluated separately using CLIPScore, which
+measures similarity between the generated image and the text prompt in a
+shared embedding space~\cite{hessel2021clipscore}.
+
+\textbf{Molecular generation.} Evaluation is grounded in physical validity
+rather than aesthetics: generated structures must respect valency rules and
+realistic bond geometries. Beyond validity, models are assessed on their ability
+to optimize for target properties such as drug-likeness or binding
+affinity~\cite{gomez2018automatic}, with standardized benchmarks such as
+GuacaMol providing systematic comparison~\cite{brown2019guacamol}.
+
+In all modalities, no single metric perfectly captures quality. Robust
+evaluation combines automatic metrics with human expert review, accepting that
+the approximation gap between $p_{model}$ and $p_{data}$ manifests differently
+in different dimensions --- a model may be fluent but hallucinate facts, or
+generate realistic-looking images that fail to follow the prompt.
 
 \section{Conclusion}
 
-This chapter has established the conceptual foundations of generative AI. We've defined what these systems generate (high-dimensional vectors representing text, images, videos, or molecules), what generation means (probabilistic sampling from learned distributions), how conditioning enables control (sampling from conditional distributions), and how training datasets enable approximating unknown data distributions.
+This chapter has established the conceptual foundations of generative AI. We
+defined what these systems generate (high-dimensional vectors representing text,
+images, video, or molecules), what generation means (probabilistic sampling from
+a learned approximation to an unknown data distribution), how conditioning
+enables controlled generation (sampling from the conditional distribution
+$p_{data}(\mathbf{z} \mid \mathbf{y})$), and how training datasets allow
+$p_{model}$ to approximate $p_{data}$.
 
-Several key insights emerge from this conceptual framework:
+Several key insights emerge:
 
-\textbf{Probabilistic nature:} Generation is inherently probabilistic. Models don't compute deterministic outputs but rather sample from distributions, leading to both creativity (varied outputs) and uncertainty (occasional errors).
+\textbf{Generation has deep mathematical roots.} The probabilistic view of
+sequences traces directly to Markov (1913) and Shannon (1948). Modern generative
+AI is the computational realization of their program --- learning conditional
+probability distributions from data, at a scale neither could have imagined.
 
-\textbf{Approximation:} All generative models approximate unknown distributions from finite training data. Perfect generation is impossible, but modern models achieve remarkably good approximations.
+\textbf{Conditioning is what makes generation useful.} Unconditional sampling
+from $p_{data}$ is theoretically elegant but practically limited. Conditioning
+on a prompt, a reference, or a constraint transforms a curiosity into a tool.
 
-\textbf{Conditioning is control:} Conditional generation transforms generative models from toys to tools. By conditioning on prompts, images, or other information, users guide generation toward desired outputs.
+\textbf{Approximation is unavoidable.} Every generative model learns
+$p_{model} \approx p_{data}$ from finite data. The gap between them --- which
+regions of the distribution the model covers well and which it covers poorly ---
+determines where the model succeeds and where it fails.
 
-\textbf{Data is fundamental:} The quality and coverage of training data largely determines model capabilities. Garbage in, garbage out applies—models learn the distributions present in their training data, including biases and limitations.
+\textbf{Two architectural families dominate.} Transformer-based autoregressive
+models apply the chain rule of probability to discrete sequences; flow-based
+models learn continuous transformations from noise to data. Both are described
+in detail in subsequent chapters.
 
-\textbf{Scale matters:} Across modalities, larger models trained on more data generally perform better. This scaling has driven much of the recent progress in generative AI.
+As we proceed to Chapter~4, we will build on these foundations to explore the
+transformer architecture that underpins most modern generative models ---
+seeing how the abstract conditional distributions defined here are concretely
+approximated by self-attention, feedforward networks, and large-scale training.
 
-As we proceed to subsequent chapters, we'll build on these foundations to explore specific model architectures (transformers, diffusion models), training procedures (supervised learning, reinforcement learning), and applications (text generation, image synthesis, scientific discovery). The conceptual framework established here—generation as probabilistic sampling from learned distributions—will remain our guiding principle throughout.
-
-Understanding these core concepts equips us to think rigorously about generative AI. Rather than viewing these systems as magical black boxes, we can reason about them as sophisticated statistical machines that learn to approximate data distributions from examples, then generate new samples from those learned distributions. This perspective enables both effective use of existing systems and development of new generative AI technologies.
 
 \chapter{Model Architectures for Generative AI}
 
@@ -12206,6 +12495,20 @@ DeepSeek-AI.
 Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E. Hinton.
 \textit{Layer Normalization}.
 arXiv preprint arXiv:1607.06450, 2016.
+
+\bibitem{markov1913}
+A.~A. Markov.
+\newblock Primer statisticheskogo issledovaniya nad tekstom ``{E}vgeniya
+  {O}negina'' illyustriruyushchiy svyaz' ispytaniy v tsep' [An example of
+  statistical investigation of the text of ``{E}ugene {O}negin'' concerning the
+  connection of samples in chains].
+\newblock \textit{Bulletin de l'Acad{\'e}mie Imp{\'e}riale des Sciences de
+  St.-P{\'e}tersbourg}, 7(3):153--162, 1913.
+
+\bibitem{shannon1948}
+C.~E. Shannon.
+\newblock A mathematical theory of communication.
+\newblock \textit{Bell System Technical Journal}, 27(3):379--423, 623--656, 1948.
 
 \end{thebibliography}
 
