@@ -3388,643 +3388,605 @@ In subsequent chapters, we'll explore how these architectures are trained on mas
 \chapter{Pretraining Models at Scale}
 
 \section{Introduction}
+\label{sec:pretraining_intro}
 
-Training state-of-the-art generative AI models requires unprecedented computational resources. A single large language model might contain hundreds of billions of parameters and be trained on trillions of tokens, requiring thousands of GPUs running for weeks or months. No single GPU has sufficient memory to store such models, let alone train them efficiently. This chapter explores the sophisticated distributed training strategies that enable training at this scale.
+Training state-of-the-art generative AI models requires unprecedented
+computational resources. A single large language model may contain hundreds
+of billions of parameters and be trained on trillions of tokens, demanding
+thousands of accelerators running for weeks or months. No single device has
+sufficient memory to store such a model, let alone train it efficiently. This
+chapter explores the distributed training strategies that make training at
+this scale possible.
 
-The fundamental challenge is straightforward: modern generative AI models are too large to fit on a single GPU. A 70-billion parameter model requires approximately 280 GB of memory just to store its weights in full precision (32-bit floating point), far exceeding the 40-80 GB available on high-end GPUs. Training adds additional memory requirements for activations, gradients, and optimizer states, potentially multiplying memory needs by 4-16×.
+The core challenge is straightforward: modern generative AI models are too
+large to fit on a single accelerator. A 70-billion parameter model requires
+approximately 280 GB of memory just to store its weights in full precision,
+far exceeding the capacity of any single device available today. Training
+multiplies this requirement further --- activations, gradients, and optimizer
+states can push memory needs four to sixteen times beyond the storage cost of
+the weights alone.
 
-The solution involves distributing the model, data, and computation across hundreds or thousands of GPUs working in concert. This distribution introduces new challenges: how to partition the model and data, how to synchronize updates across devices, how to minimize communication overhead, and how to maximize hardware utilization. The strategies we'll explore—data parallelism, model parallelism, and various hybrid approaches—represent the state of the art in distributed deep learning.
+The solution distributes the model, data, and computation across hundreds or
+thousands of devices working in concert. This distribution introduces its own
+challenges: how to partition the model and data, how to synchronize updates
+across devices, how to minimize communication overhead, and how to keep
+hardware utilization high. The strategies explored in this chapter --- data
+parallelism, model parallelism, and various hybrid approaches --- represent
+the current state of the art in distributed deep learning.
 
-Understanding these techniques is essential not just for training new models, but for comprehending the engineering complexity behind systems like GPT-4, Claude, or Llama. The architectural decisions about parallelization strategies fundamentally shape what models can be trained, how quickly they train, and ultimately what capabilities they can achieve.
+It is worth noting at the outset that the concepts in this chapter are
+hardware-agnostic. Whether a training cluster is built from GPUs, TPUs, or
+other AI accelerators, the same fundamental principles govern how computation,
+memory, and communication are organized. Specific implementations and optimal
+configurations differ by hardware and software stack, but the conceptual
+framework is universal.
 
 \section{The Scaling Challenge}
+\label{sec:scaling_challenge}
 
-\subsection{Memory Requirements for Mixed-Precision Training}
+\subsection{Memory Requirements}
+\label{sec:memory_requirements}
 
-To understand the necessity of distributed training in 2026, let's quantify the memory requirements for FP16 mixed-precision training:
+To understand the necessity of distributed training, we begin by quantifying
+the memory required to train a large model. Consider mixed-precision training
+with the Adam optimizer, the standard configuration for large-scale runs.
 
-\textbf{Model Parameters:} During training, weights are stored in FP16 (2 bytes per parameter) for the forward and backward passes. However, to maintain numerical stability, a master copy is kept in FP32 (4 bytes). Total memory for weights is $2N + 4N = 6N$ bytes. For a 175-billion parameter model like GPT-3, this requires $1.05$ TB ($6 \times 175 \times 10^9$).
+\textbf{Model parameters.} Weights are stored in 16-bit floating point (FP16
+or BF16, 2 bytes per parameter) for the forward and backward passes.
+To maintain numerical stability during updates, a full-precision (FP32,
+4 bytes) master copy is kept alongside. The total cost per parameter for
+weights is therefore $2 + 4 = 6$ bytes.
 
-\textbf{Gradients:} Gradients are typically computed and stored in FP16 to save memory and communication bandwidth, requiring $2N$ bytes.
+\textbf{Gradients.} Gradients are computed and stored in 16-bit format,
+adding $2$ bytes per parameter.
 
-\textbf{Optimizer States:} Optimizers like Adam store momentum and variance estimates in FP32 to ensure precise updates. This requires $8N$ additional bytes (two 4-byte states per parameter).
+\textbf{Optimizer states.} Adam stores two FP32 quantities per parameter ---
+first-moment (momentum) and second-moment (variance) estimates. These require
+$4 + 4 = 8$ bytes per parameter.
 
-\textbf{Activations:} Forward pass activations are stored for backpropagation. In mixed precision, these are usually stored in FP16 (2 bytes). For a sequence of length $s$, batch size $b$, hidden dimension $h$, and $L$ layers, activation memory is approximately $sbhL \times 2$ bytes (with additional overhead for attention and layer norms).
+The total memory per parameter during training is therefore:
 
-\textbf{Total Training Memory:} For a simplified estimate using Adam:
 \begin{equation}
-\text{Memory} \approx \underbrace{2N}_{\text{Weights}} + \underbrace{2N}_{\text{Gradients}} + \underbrace{12N}_{\text{Optimizer States (inc. master weights)}} + \text{activations} = 16N + \text{activations}
+\label{eq:training_memory}
+\text{Memory per parameter} = \underbrace{6}_{\text{weights}} +
+    \underbrace{2}_{\text{gradients}} +
+    \underbrace{8}_{\text{optimizer states}} = 16 \text{ bytes}
 \end{equation}
 
-For GPT-3 scale (175B parameters), the model states alone require 2.8 TB of memory. When accounting for activations, this footprint scales significantly, requiring massive distribution across hundreds of GPUs.
+For a model with $N$ parameters, total memory for model states is $16N$ bytes,
+before accounting for activations. For a 175-billion parameter model, this is
+$16 \times 175 \times 10^9 \approx 2.8$ TB of memory for model states alone.
+Activations add further overhead proportional to batch size, sequence length,
+and model depth.
+
+Figure~\ref{fig:memory_breakdown} shows this decomposition visually. The
+optimizer states account for half the memory budget, which motivates the
+memory optimizations discussed in Section~\ref{sec:memory_optimizations}.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.75\textwidth]{images/memory_breakdown.png}
+    \caption{Decomposition of the 16 bytes per parameter required for
+    mixed-precision training with Adam. Optimizer states account for 50\%
+    of the total; the FP32 master weights account for 25\%. Gradients and
+    FP16 working weights together make up the remaining 25\%.}
+    \label{fig:memory_breakdown}
+\end{figure}
 
 \subsection{Compute Requirements}
+\label{sec:compute_requirements}
 
-Training also demands enormous compute. The computational cost for training a transformer model is approximately:
+Training also demands enormous compute. The computational cost of training
+a transformer is approximately:
 
 \begin{equation}
+\label{eq:flops}
 \text{FLOPs} \approx 6N \times D
 \end{equation}
 
-where $N$ is the number of parameters and $D$ is the total number of training tokens. This $6N$ factor accounts for the forward pass ($\approx 2N$) and the backward pass ($\approx 4N$), a standard estimate derived from \cite{kaplan2020scaling} and further validated in the context of compute-optimality by \cite{hoffmann2022training}.
+where $N$ is the number of parameters and $D$ is the number of training
+tokens. The factor of 6 decomposes as approximately $2N$ FLOPs for the
+forward pass and $4N$ for the backward pass (since the backward pass must
+compute gradients with respect to both activations and parameters). This
+estimate was established empirically in scaling law
+research~\cite{kaplan2020scaling} and further validated in
+subsequent work~\cite{hoffmann2022training}.
 
-For a 100B parameter model ($N = 10^{11}$) trained on 1 trillion tokens ($D = 10^{12}$):
-\begin{equation}
-\text{FLOPs} \approx 6 \times 10^{11} \times 10^{12} = 6 \times 10^{23}
-\end{equation}
+To put this in perspective: a 100-billion parameter model trained on one
+trillion tokens requires approximately $6 \times 10^{23}$ floating-point
+operations. On a single high-end accelerator capable of around one petaFLOP
+per second of sustained throughput, this would require on the order of
+seventeen years of continuous computation. Even a cluster of a thousand
+such devices would take six days per training run. Large-scale training is
+therefore not a luxury but a necessity.
 
-On a high-end NVIDIA Blackwell B200 GPU delivering 1.1 PFLOPS (1,100 trillion FLOPs per second) of TF32 compute, this would require:
-\begin{equation}
-\text{Time} = \frac{6 \times 10^{23}}{1.1 \times 10^{15}} \approx 5.45 \times 10^8 \text{ seconds} \approx 17.3 \text{ years}
-\end{equation}
+\subsection{Scaling Laws and Compute-Optimal Training}
+\label{sec:scaling_laws}
 
-Scaling beyond a single GPU is a must if we want to train massive LLMs in a reasonable time frame.
+An important insight that shapes how practitioners allocate their compute
+budget is the Chinchilla scaling law~\cite{hoffmann2022training}. Earlier
+work~\cite{kaplan2020scaling} suggested that for a fixed compute budget,
+one should prioritize larger models trained on fewer tokens. Hoffmann et al.\
+showed that this was incorrect: compute-optimal training requires roughly
+twenty training tokens per parameter. A model with $N$ parameters should
+be trained on approximately $20N$ tokens to make full use of the compute
+invested.
 
-\section{Parallelization Strategies: Overview}
+This result has practical consequences for distributed training. It means
+that very large models must also be trained on very large datasets to justify
+their parameter count, and that under-training a large model is a waste of
+compute. The interaction between model size, dataset size, and compute budget
+is therefore a first-order design decision before any parallelization strategy
+is chosen.
 
-Modern large-scale training employs a hierarchy of parallelization strategies:
-
-\textbf{Data Parallelism (DP):} Same model, different data. Each device holds a complete copy of the model and processes different data batches. Gradients are synchronized across devices.
-
-\textbf{Model Parallelism (MP):} Same data, different model parts. The model is partitioned across devices, with each device holding only a portion of the parameters.
-
-These strategies can be combined in various ways, and both benefit from memory optimization techniques and reduced precision training. The taxonomy includes:
-
-\begin{itemize}
-\item \textbf{Distributed Data Parallel (DDP):} Basic data parallelism with gradient synchronization
-\item \textbf{Zero Redundancy Optimizer (ZeRO):} Advanced data parallelism eliminating redundancy
-\item \textbf{Fully Sharded Data Parallel (FSDP):} ZeRO implementation sharding parameters, gradients, and optimizer states
-\item \textbf{Tensor Parallelism:} Splitting individual layers/tensors across devices
-\item \textbf{Pipeline Parallelism:} Splitting layers sequentially across devices
-\item \textbf{Sequence Parallelism:} Splitting sequence dimension across devices
-\end{itemize}
-
-These strategies are typically combined: a training run might use FSDP for data parallelism, tensor parallelism within nodes, and pipeline parallelism across nodes.
+% ============================================================
+% PATCH: Chapter 5 replacement sections
+% Replaces \section{Collective Communication Operations}
+% through end of \section{Combining Parallelization Strategies}
+% ============================================================
 
 \section{Collective Communication Operations}
+\label{sec:collective_comm}
 
-Distributed training relies on collective communication primitives that synchronize information across devices. Understanding these operations is essential for understanding parallelization strategies.
+Distributed training relies on collective communication primitives that
+coordinate information across devices. These operations are the building
+blocks from which all parallelization strategies are constructed. Before
+examining how each parallelization strategy works, it is worth understanding
+exactly what these primitives do, since they appear repeatedly throughout
+the chapter.
 
 \subsection{All-Reduce}
+\label{sec:all_reduce}
 
-All-Reduce combines data from all devices and distributes the result to all devices. Mathematically, if each device $i$ holds a value $A_i$, All-Reduce computes a reduction operation (typically sum) and gives every device the result.
+All-Reduce combines values from all devices using a reduction operation ---
+typically summation --- and distributes the result back to every device.
+After an All-Reduce, every device holds the same reduced value.
 
-\textbf{Example:} With 4 GPUs holding values $[A_0, A_1, A_2, A_3]$:
-\begin{itemize}
-\item Input: GPU 0 has $A_0$, GPU 1 has $A_1$, GPU 2 has $A_2$, GPU 3 has $A_3$
-\item Output: Each GPU has $A_0 + A_1 + A_2 + A_3$
-\end{itemize}
+Figure~\ref{fig:all_reduce} illustrates this operation. In data parallelism,
+All-Reduce synchronizes gradients: each device computes gradients on its
+local mini-batch, All-Reduce sums them across devices, and every device then
+holds the globally summed gradient and divides by the number of devices to
+obtain the average. All devices then perform identical parameter updates,
+keeping all replicas synchronized.
 
-\textbf{Use in training:} All-Reduce synchronizes gradients in data parallelism. Each GPU computes gradients on its data batch, then All-Reduce sums gradients across GPUs so every GPU has the averaged gradient.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.80\textwidth]{images/all_reduce.png}
+    \caption{All-Reduce with four devices. Before the operation, each device
+    holds a distinct value. After the operation, every device holds the sum
+    of all values. This is used in data parallelism to synchronize gradients
+    across all devices.}
+    \label{fig:all_reduce}
+\end{figure}
 
 \subsection{Reduce-Scatter}
+\label{sec:reduce_scatter}
 
-Reduce-Scatter performs a reduction operation and distributes different parts of the result to different devices.
+Reduce-Scatter performs a reduction but distributes different portions of the result to different devices. Each device starts with a full vector; after Reduce-Scatter, device $i$ holds only the $i$-th portion of the element-wise sum across all devices.
 
-\textbf{Example:} With 4 GPUs each holding a 4-element vector:
-\begin{itemize}
-\item GPU 0: $[A_0, A_1, A_2, A_3]$
-\item GPU 1: $[B_0, B_1, B_2, B_3]$
-\item GPU 2: $[C_0, C_1, C_2, C_3]$
-\item GPU 3: $[D_0, D_1, D_2, D_3]$
-\end{itemize}
+Figure~\ref{fig:reduce_scatter} illustrates this. In FSDP, Reduce-Scatter
+is used after backpropagation: each device contributes its locally computed
+gradient vector, the operation sums them elementwise and partitions the
+result so that each device receives exactly the gradient shard corresponding
+to its parameter shard.
 
-After Reduce-Scatter:
-\begin{itemize}
-\item GPU 0: $[A_0 + B_0 + C_0 + D_0]$
-\item GPU 1: $[A_1 + B_1 + C_1 + D_1]$
-\item GPU 2: $[A_2 + B_2 + C_2 + D_2]$
-\item GPU 3: $[A_3 + B_3 + C_3 + D_3]$
-\end{itemize}
-
-Each GPU receives one part of the reduced result.
-
-\textbf{Use in training:} FSDP uses Reduce-Scatter to shard gradients after backpropagation—each GPU gets its assigned shard of the summed gradients.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.80\textwidth]{images/reduce_scatter.png}
+    \caption{Reduce-Scatter with four devices. Each device begins with a
+    4-element vector. After the operation, each device holds one element ---
+    the sum of the corresponding elements across all devices. Used in FSDP
+    to distribute reduced gradients across devices.}
+    \label{fig:reduce_scatter}
+\end{figure}
 
 \subsection{All-Gather}
+\label{sec:all_gather}
 
-All-Gather collects data from all devices and gives every device the complete concatenated result.
+All-Gather is the complement of Reduce-Scatter. Each device holds one shard
+of a tensor; after All-Gather, every device holds the complete concatenated
+tensor.
 
-\textbf{Example:} With 4 GPUs holding values $[A_0, A_1, A_2, A_3]$:
-\begin{itemize}
-\item Input: GPU 0 has $A_0$, GPU 1 has $A_1$, GPU 2 has $A_2$, GPU 3 has $A_3$
-\item Output: Each GPU has $[A_0, A_1, A_2, A_3]$
-\end{itemize}
-
-\textbf{Use in training:} FSDP uses All-Gather to reconstruct full model weights from sharded parameters before forward/backward passes.
-
-\subsection{Communication Complexity}
-
-The bandwidth required for collective operations depends on the number of devices $n$ and data size $m$:
-
-\begin{itemize}
-\item \textbf{All-Reduce:} $O(\frac{2m(n-1)}{n})$ per device using ring algorithm
-\item \textbf{Reduce-Scatter:} $O(\frac{m(n-1)}{n})$ per device
-\item \textbf{All-Gather:} $O(\frac{m(n-1)}{n})$ per device
-\end{itemize}
-
-These communication costs can become bottlenecks when $m$ (model size) is large or network bandwidth is limited. Minimizing communication volume is a key objective in designing parallelization strategies.
-
-\section{Data Parallelism}
-
-\subsection{Distributed Data Parallel (DDP)}
-
-DDP is the most straightforward parallelization approach: replicate the entire model on each GPU, but give each GPU different training data (Figure \ref{fig:ddp}).
+Figure~\ref{fig:all_gather} illustrates this. In FSDP, All-Gather
+reconstructs full parameter tensors from their shards before each forward
+or backward pass. The reconstructed parameters are discarded immediately
+after use --- each device retains only its own shard --- so that memory
+stays at $\frac{1}{n}$ of the full model between compute steps.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\textwidth]{images/ddp.png}
-    \caption{Distributed data parallel replicates the entire model on each GPU}
-    \label{fig:ddp}
+    \includegraphics[width=0.80\textwidth]{images/all_gather.png}
+    \caption{All-Gather with four devices. Each device begins with one shard
+    of a distributed tensor. After the operation, every device holds the
+    complete concatenated tensor. Used in FSDP to reconstruct full parameters
+    from shards before forward and backward passes.}
+    \label{fig:all_gather}
 \end{figure}
 
-\begin{algorithm}[H]
-\caption{Distributed Data Parallel (DDP) Training}
-\label{alg:ddp_training}
-\begin{algorithmic}[1]
-\Require Dataset $\mathcal{D}$, Model Parameters $\theta$, Learning Rate $\eta$, Number of GPUs $N$
 
-\State \textbf{1. Initialize:}
-\State Broadcast parameters $\theta$ to all GPUs $\{1, \ldots, N\}$ so $\theta_1 = \theta_2 = \dots = \theta_N$
+\subsection{Communication Costs}
+\label{sec:comm_costs}
 
-\Repeat
-    \State \textbf{Parallel Execution:} \Comment{Steps 2 \& 3 happen on all GPUs simultaneously}
-    \For{each GPU $k \in \{1, \ldots, N\}$ \textbf{in parallel}}
-        \State Sample mini-batch $B_k \sim \mathcal{D}$
-        \State Forward pass: Compute Loss $\mathcal{L}_k$ on $B_k$
-        \State Backward pass: Compute local gradients $g_k \leftarrow \nabla_\theta \mathcal{L}_k$
-    \EndFor
+For $n$ devices and a tensor of total size $m$ elements, the per-device
+bandwidth required under a ring algorithm is approximately
+$\frac{m(n-1)}{n}$ for both Reduce-Scatter and All-Gather, and
+$\frac{2m(n-1)}{n}$ for All-Reduce (which decomposes into one Reduce-Scatter
+followed by one All-Gather). As $n$ grows large, all three approach $m$ per
+device: communication cost does not grow with the number of devices for
+a fixed tensor size. However, when tensor size itself scales with the model
+--- as it does in large language models --- communication can become the
+dominant cost, making the choice of parallelization strategy and network
+topology critical.
 
-    \State \textbf{4. Synchronization:}
-    \State \Comment{Aggregates gradients from all GPUs}
-    \State $g_{\text{global}} \leftarrow \text{All-ReduceSum}(g_1, \ldots, g_N)$ 
-    \State $g_{\text{avg}} \leftarrow g_{\text{global}} / N$
+% ============================================================
+% PATCH: ZeRO section — restore memory arithmetic examples
+% ============================================================
 
-    \State \textbf{5. Update:}
-    \For{each GPU $k \in \{1, \ldots, N\}$ \textbf{in parallel}}
-        \State Update local parameters: $\theta_k \leftarrow \theta_k - \eta \cdot g_{\text{avg}}$
-    \EndFor
-\Until{converged}
-\end{algorithmic}
-\end{algorithm}
+\section{Zero Redundancy Optimizer}
+\label{sec:zero}
 
-Mathematically, if GPU $i$ computes gradients $\nabla_i$ on its mini-batch, the synchronized gradient is:
-
-\begin{equation}
-\nabla_{avg} = \frac{1}{n} \sum_{i=1}^{n} \nabla_i
-\end{equation}
-
-where $n$ is the number of GPUs. All-Reduce computes this efficiently.
-
-\textbf{Advantages:}
-\begin{itemize}
-\item Simple to implement and understand
-\item Effective batch size is $n \times \text{local\_batch\_size}$, improving training stability
-\item Linear scaling in throughput with number of GPUs (if communication isn't bottlenecked)
-\end{itemize}
-
-\textbf{Disadvantages:}
-\begin{itemize}
-\item Each GPU must hold the complete model, limiting maximum model size
-\item Redundant storage of model parameters, gradients, and optimizer states
-\item All-Reduce communication can become a bottleneck for very large models
-\end{itemize}
-
-\subsection{The Redundancy Problem}
-
-In DDP, every GPU stores:
-\begin{itemize}
-\item Model parameters: $N$ values
-\item Gradients: $N$ values
-\item Optimizer states (for Adam): $2N$ values (momentum and variance)
-\end{itemize}
-
-For a 175B parameter model with 1000 GPUs, the total memory across all GPUs is:
-\begin{equation}
-\text{Total Memory} = 1000 \times 16N = 16,000N \text{ values}
-\end{equation}
-
-But we only need $N$ parameters—the rest is redundant! This massive redundancy motivated the development of ZeRO.
-
-\section{Zero Redundancy Optimizer (ZeRO)}
-
-ZeRO \cite{{rajbhandari2020zero}} eliminates memory redundancy in data parallelism while maintaining its computational efficiency. The key insight: we don't need to replicate everything across all GPUs.
+The Zero Redundancy Optimizer (ZeRO)~\cite{rajbhandari2020zero} eliminates
+memory redundancy in data parallelism while maintaining its computational
+efficiency. The central insight is that devices do not need to hold redundant
+copies of every training state: each device needs the full parameters during
+forward and backward passes, but optimizer states and gradients are only
+needed locally during the update step. ZeRO exploits this by partitioning
+states across devices and reconstructing them on demand.
 
 \subsection{ZeRO Stages}
+\label{sec:zero_stages}
 
-ZeRO partitions memory state across GPUs in three stages of increasing aggressiveness:
-
-\textbf{ZeRO Stage 1 - Optimizer State Partitioning:}
-\begin{itemize}
-\item Partition optimizer states across GPUs
-\item Each GPU stores only $\frac{1}{n}$ of optimizer states
-\item Memory reduction: $\frac{12N}{n} + 4N$ instead of $16N$
-\item Requires minimal communication overhead
-\end{itemize}
-
-\textbf{ZeRO Stage 2 - Gradient Partitioning:}
-\begin{itemize}
-\item Additionally partition gradients across GPUs
-\item Each GPU stores only $\frac{1}{n}$ of gradients
-\item Memory reduction: $\frac{14N}{n} = \frac{14N}{n} + 2N$ instead of $16N$
-\item Requires Reduce-Scatter for gradients instead of All-Reduce
-\end{itemize}
-
-\textbf{ZeRO Stage 3 - Parameter Partitioning:}
-\begin{itemize}
-\item Additionally partition model parameters across GPUs
-\item Each GPU stores only $\frac{1}{n}$ of parameters
-\item Memory reduction: $\frac{16N}{n}$ total across all GPUs
-\item Requires All-Gather to reconstruct parameters during forward/backward
-\end{itemize}
-
-\subsection{ZeRO Stage 3 / FSDP: Detailed Mechanism}
-
-Fully Sharded Data Parallel (FSDP) \cite{zhao2023pytorch} implements ZeRO Stage 3. The training workflow becomes:
-
-\textbf{Forward Pass for Layer $L$:}
-\begin{enumerate}
-\item \textbf{All-Gather:} Collect sharded parameters for layer $L$ from all GPUs
-\item \textbf{Compute:} Perform forward pass through layer $L$ with full parameters
-\item \textbf{Discard:} Free memory for parameters not belonging to this GPU's shard
-\item Repeat for next layer
-\end{enumerate}
-
-\textbf{Backward Pass for Layer $L$:}
-\begin{enumerate}
-\item \textbf{All-Gather:} Collect sharded parameters for layer $L$
-\item \textbf{Compute:} Perform backward pass, computing gradients
-\item \textbf{Reduce-Scatter:} Sum gradients across GPUs, each keeping its shard
-\item \textbf{Update:} Each GPU updates its parameter shard locally
-\item \textbf{Discard:} Free parameters not in this GPU's shard
-\item Repeat for previous layer
-\end{enumerate}
-
-\textbf{Memory Analysis:}
-
-At any point, each GPU holds:
-\begin{itemize}
-\item Its full shard: $\frac{16N}{n}$ bytes
-\item Temporarily during forward/backward: full parameters for current layer (freed after use)
-\end{itemize}
-
-The temporary full parameters for a single layer are much smaller than the entire model, making large models tractable.
-
-\subsection{FSDP Communication Pattern}
-
-The communication pattern for FSDP is more complex than DDP but dramatically reduces memory:
-
-\begin{itemize}
-\item \textbf{Forward pass:} $L$ All-Gather operations (one per layer)
-\item \textbf{Backward pass:} $L$ All-Gather operations + $L$ Reduce-Scatter operations
-\item \textbf{Total communication:} $2L$ All-Gather + $L$ Reduce-Scatter
-\end{itemize}
-
-For large models, this increased communication is worthwhile because it enables training models that otherwise wouldn't fit in memory.
-
-\textbf{Trade-off:} FSDP trades increased communication for reduced memory, enabling much larger models at the cost of potentially slower training if communication is slow.
-
-\section{Model Parallelism}
-
-When models are so large that even sharding across data parallel devices isn't sufficient, we must partition the model itself. Model parallelism splits the model across devices, with each device holding different parts of the parameters.
-
-\subsection{Tensor Parallelism}
-
-Tensor parallelism splits individual layers horizontally across devices. For large matrix multiplications, we can partition the matrices and compute in parallel.
-
-\textbf{Example - MLP Layer:}
-
-Consider an MLP layer with input $\mathbf{X}$ (shape $[b, h]$), weight matrix $\mathbf{W}^1$ (shape $[h, 4h]$), and output:
-
-\begin{equation}
-\mathbf{Y} = \text{GeLU}(\mathbf{X}\mathbf{W}^1)
-\end{equation}
-
-With 2-way tensor parallelism, we split $\mathbf{W}^1$ column-wise:
-
-\begin{equation}
-\mathbf{W}^1 = [\mathbf{W}^1_A | \mathbf{W}^1_B]
-\end{equation}
-
-Each device computes part of the output:
-\begin{itemize}
-\item Device 1: $\mathbf{Y}_A = \text{GeLU}(\mathbf{X}\mathbf{W}^1_A)$
-\item Device 2: $\mathbf{Y}_B = \text{GeLU}(\mathbf{X}\mathbf{W}^1_B)$
-\end{itemize}
-
-The outputs are All-Reduced for the next layer (Figure \ref{fig:tp_mlp_layer}).
+ZeRO proceeds in three stages of increasing aggressiveness, each eliminating
+a different source of redundancy. Figure~\ref{fig:zero_stages} summarizes
+the memory per device at each stage and Figure~\ref{fig:zero_memory} shows
+the reduction for a concrete example.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\textwidth]{images/tp_mlp_layer.png}
-    \caption{Tensor-parallelism for MLP layer.}
-    \label{fig:tp_mlp_layer}
+    \includegraphics[width=0.85\textwidth]{images/zero_stages.png}
+    \caption{Per-device memory under DDP and each ZeRO stage for a 175B
+    parameter model on 1000 devices. Each bar is decomposed into parameter,
+    gradient, and optimizer state contributions. ZeRO Stage 3 reduces
+    per-device memory from 2.8 TB to 2.8 GB --- a factor of 1000.}
+    \label{fig:zero_stages}
 \end{figure}
 
-\textbf{Example - Attention:}
+\textbf{Stage 1 --- Optimizer State Partitioning.} Optimizer states (8 bytes
+per parameter in Adam) are partitioned equally across all $n$ devices. Each
+device stores only $\frac{1}{n}$ of the optimizer states while keeping full
+copies of parameters (6 bytes) and gradients (2 bytes). Memory per device
+becomes:
 
-In multi-head attention with $h$ heads, we can assign different heads to different devices. With 8 heads and 4 devices, each device computes 2 heads.
-
-Device $i$ computes:
 \begin{equation}
-\text{head}_{i,1}, \text{head}_{i,2} = \text{Attention}(\mathbf{Q}_{i}, \mathbf{K}_{i}, \mathbf{V}_{i})
+\label{eq:zero1}
+\text{ZeRO-1 memory} = 6N + 2N + \frac{8N}{n} = 8N + \frac{8N}{n}
 \end{equation}
 
-The outputs are All-Reduced for the next layer (Figure \ref{fig:tp_attn_layer}).
+For $n = 1000$ devices this is effectively $8N$ bytes per device --- a $2\times$
+reduction from the $16N$ baseline --- with minimal additional communication:
+each device simply updates its optimizer state shard after the standard
+All-Reduce.
+
+\textbf{Stage 2 --- Gradient Partitioning.} Additionally, gradients (2 bytes
+per parameter) are partitioned. A Reduce-Scatter replaces the All-Reduce for
+gradients, so each device accumulates only its assigned gradient shard.
+Memory per device becomes:
+
+\begin{equation}
+\label{eq:zero2}
+\text{ZeRO-2 memory} = 6N + \frac{2N}{n} + \frac{8N}{n} = 6N + \frac{10N}{n}
+\end{equation}
+
+For $n = 1000$ this is effectively $6N$ bytes per device --- a $2.67\times$
+reduction from the baseline.
+
+\textbf{Stage 3 --- Parameter Partitioning.} Additionally, parameters are
+partitioned. Each device stores only $\frac{1}{n}$ of the parameters,
+gradients, and optimizer states. Memory per device becomes:
+
+\begin{equation}
+\label{eq:zero3}
+\text{ZeRO-3 memory} = \frac{6N}{n} + \frac{2N}{n} + \frac{8N}{n}
+    = \frac{16N}{n}
+\end{equation}
+
+This is a factor-of-$n$ reduction from DDP. For a 175-billion parameter
+model ($N = 175 \times 10^9$) on $n = 1000$ devices:
+
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\textwidth]{images/tp_attn_layer.png}
-    \caption{Tensor-parallelism for Multi-head Attention layer.}
-    \label{fig:tp_attn_layer}
+    \includegraphics[width=0.85\textwidth]{images/zero_memory.png}
+    \caption{Per-device memory under DDP and each ZeRO stage for a 175B
+    parameter model on 1000 devices. Each bar is decomposed into parameter,
+    gradient, and optimizer state contributions. ZeRO Stage 3 reduces
+    per-device memory from 2.8 TB to 2.8 GB --- a factor of 1000.}
+    \label{fig:zero_memory}
 \end{figure}
 
-\textbf{Communication Requirements:}
 
-Tensor parallelism requires:
-\begin{itemize}
-\item All-Reduce after each partitioned operation
-\item High bandwidth between devices (ideally within a single node)
-\item Fine-grained synchronization
-\end{itemize}
+\subsection{Fully Sharded Data Parallel}
+\label{sec:fsdp}
 
-\textbf{Advantages:}
-\begin{itemize}
-\item Reduces per-device memory by factor of tensor parallelism degree
-\item Maintains high GPU utilization through parallel computation
-\item Works well within high-bandwidth interconnects (NVLink)
-\end{itemize}
-
-\textbf{Disadvantages:}
-\begin{itemize}
-\item Requires very high bandwidth—typically only practical within a node
-\item Increases communication overhead
-\item More complex to implement
-\end{itemize}
-
-\subsection{Pipeline Parallelism}
-
-Pipeline parallelism (Figure \ref{fig:pp}) splits the model vertically across layers. Different devices hold different layers of the model.
+Fully Sharded Data Parallel (FSDP)~\cite{zhao2023pytorch} implements ZeRO
+Stage 3 with a layer-by-layer protocol designed to minimize peak memory.
+Figure~\ref{fig:fsdp_protocol} shows the sequence of operations for a
+two-layer model on four devices.
 
 \begin{figure}[htbp]
     \centering
-    \includegraphics[width=0.7\textwidth]{images/pp.png}
-    \caption{Pipeline Parallelism}
-    \label{fig:pp}
+    \includegraphics[width=0.90\textwidth]{images/fsdp_protocol.png}
+    \caption{FSDP forward and backward pass protocol for a two-layer model
+    on four devices. Each device holds only its parameter shard between
+    compute steps. Parameters are reconstructed via All-Gather immediately
+    before each layer computation and discarded immediately after. Gradients
+    are distributed via Reduce-Scatter after each backward step.}
+    \label{fig:fsdp_protocol}
 \end{figure}
 
-\textbf{Naive Pipeline:}
-
-With 3 devices and a 12-layer model:
-\begin{itemize}
-\item Device 1: Layers 1-4
-\item Device 2: Layers 5-8
-\item Device 3: Layers 9-12
-\end{itemize}
-
-Data flows sequentially: Device 1 → Device 2 → Device 3.
-
-\textbf{Problem - Pipeline Bubbles:}
-
-Naive pipelining creates idle time (bubbles). When Device 1 processes batch 1, Devices 2 and 3 are idle. When Device 2 processes batch 1, Device 3 is still idle.
-
-\textbf{Solution - Micro-batching:}
-
-Split each mini-batch into smaller micro-batches and pipeline them:
+The forward pass for each layer $\ell$ proceeds as follows:
 
 \begin{enumerate}
-\item Device 1 processes micro-batch 1
-\item While Device 2 processes micro-batch 1, Device 1 starts micro-batch 2
-\item While Device 3 processes micro-batch 1, Device 2 processes micro-batch 2, Device 1 processes micro-batch 3
+\item \textbf{All-Gather}: Collect the sharded parameters for layer $\ell$
+    from all devices, reconstructing the full layer weights on every device.
+\item \textbf{Compute}: Perform the forward pass through layer $\ell$ using
+    the reconstructed weights.
+\item \textbf{Discard}: Free the gathered parameters for layer $\ell$; each
+    device retains only its own shard.
+\item Advance to layer $\ell + 1$ and repeat.
 \end{enumerate}
 
-This overlaps computation, reducing idle time.
+The backward pass mirrors this in reverse for each layer $\ell$:
 
-\textbf{GPipe and Similar Schedules:}
+\begin{enumerate}
+\item \textbf{All-Gather}: Reconstruct the full parameters for layer $\ell$.
+\item \textbf{Compute}: Perform the backward pass through layer $\ell$,
+    computing gradients with respect to parameters and inputs.
+\item \textbf{Reduce-Scatter}: Sum gradients across devices and distribute
+    shards so each device accumulates only the gradient shard corresponding
+    to its parameter shard.
+\item \textbf{Update}: Each device updates its parameter shard using its
+    gradient shard and optimizer state shard. No further communication is
+    required for this step.
+\item \textbf{Discard}: Free the gathered parameters for layer $\ell$.
+\item Advance to layer $\ell - 1$ and repeat.
+\end{enumerate}
 
-Modern pipeline parallelism uses sophisticated scheduling:
-\begin{itemize}
-\item Partition mini-batch into $m$ micro-batches
-\item Forward pass for all micro-batches
-\item Backward pass for all micro-batches in reverse order
-\item Synchronize gradients
-\end{itemize}
+At any point outside the brief All-Gather window, each device holds only
+$\frac{16N}{n}$ bytes of model state. The temporary full-layer parameters
+during a forward or backward step cover only one layer at a time, which is
+much smaller than the full model. For a model with $L$ layers, FSDP performs
+$2L$ All-Gather operations and $L$ Reduce-Scatter operations per training
+step, compared to a single All-Reduce in DDP. This increased communication
+cost is the price of the factor-of-$n$ memory reduction.
 
-The pipeline bubble (idle time) is approximately:
-\begin{equation}
-\text{Bubble} \approx \frac{p - 1}{m}
-\end{equation}
-
-where $p$ is the number of pipeline stages (devices) and $m$ is the number of micro-batches.
-
-\textbf{Advantages:}
-\begin{itemize}
-\item Enables very large models by splitting across many devices
-\item Less communication than tensor parallelism
-\item Works well across nodes with moderate bandwidth
-\end{itemize}
-
-\textbf{Disadvantages:}
-\begin{itemize}
-\item Pipeline bubbles reduce efficiency
-\item Requires careful balancing of layers across devices
-\item Increased memory for storing activations across micro-batches
-\end{itemize}
-
-\subsection{Sequence Parallelism}
-
-Sequence parallelism (Figure \ref{fig:sp}) partitions the sequence dimension across devices. This is particularly useful for long sequences.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=0.7\textwidth]{images/sp.png}
-    \caption{Sequence Parallelism for MLP Layer}
-    \label{fig:sp}
-\end{figure}
-
-For a sequence of length $s$ with 2 devices:
-\begin{itemize}
-\item Device 1 processes tokens 1 to $s/2$
-\item Device 2 processes tokens $s/2 + 1$ to $s$
-\end{itemize}
-
-Layers that need information across the full sequence (like global attention) require communication between devices.
-
-\textbf{Advantages:}
-\begin{itemize}
-\item Reduces activation memory for very long sequences
-\item Can be combined with other parallelism forms
-\end{itemize}
-
-\textbf{Disadvantages:}
-\begin{itemize}
-\item Requires communication for operations spanning sequence
-\item Limited by how much sequence dimension can be partitioned
-\end{itemize}
+% ============================================================
+% PATCH: 3D Parallelism section — restore worked arithmetic
+% ============================================================
 
 \section{Combining Parallelization Strategies}
+\label{sec:3d_parallelism}
 
-Real large-scale training combines multiple parallelization strategies in a hierarchy:
+No single parallelization strategy suffices for frontier model training.
+Tensor parallelism is limited to high-bandwidth within-node communication.
+Pipeline parallelism introduces bubbles. FSDP increases communication volume.
+Each strategy makes a different trade-off between memory, communication, and
+compute efficiency. The standard solution is to combine them in a hierarchy
+that matches the communication characteristics of each strategy to the
+network topology of the cluster.
 
-\textbf{3D Parallelism:}
+A typical configuration uses three levels of parallelism simultaneously,
+often called 3D parallelism (Figure~\ref{fig:3d_parallelism}):
 
-A typical configuration for a frontier model might use:
-\begin{itemize}
-\item \textbf{Data parallelism (FSDP):} Across all GPUs, reducing memory redundancy
-\item \textbf{Tensor parallelism:} Within nodes (8 GPUs per node with high-bandwidth NVLink)
-\item \textbf{Pipeline parallelism:} Across nodes (many nodes connected via slower inter-node network)
-\end{itemize}
+\textbf{Tensor parallelism within each node.} High-bandwidth intra-node
+interconnects support the fine-grained, frequent All-Reduce operations that
+tensor parallelism requires. A degree of 8 is common for an 8-device node.
 
-\textbf{Example Configuration:}
+\textbf{Pipeline parallelism across nodes.} Point-to-point activation
+passing between pipeline stages requires only moderate bandwidth and
+tolerates higher latency, making it well matched to inter-node network links.
+A degree of 4 to 8 pipeline stages is typical.
 
-Training a 175B parameter model on 1024 GPUs (128 nodes × 8 GPUs):
-\begin{itemize}
-\item 8-way tensor parallelism within each node
-\item 4-way pipeline parallelism across nodes
-\item 32-way FSDP (data parallelism) across pipeline stages
-\end{itemize}
+\textbf{Data parallelism (FSDP) across pipeline replicas.} Multiple copies
+of the full pipeline run in parallel on different data shards. Each replica
+communicates gradients via Reduce-Scatter and parameters via All-Gather.
 
-This gives: $8 \times 4 \times 32 = 1024$ total GPUs.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/3d_parallelism.png}
+    \caption{3D parallelism organizes devices into a three-dimensional
+    hierarchy. Tensor parallelism groups devices within each node (inner
+    dimension). Pipeline parallelism chains nodes sequentially (depth
+    dimension). Data parallelism replicates the full pipeline across
+    independent data shards (outer dimension).}
+    \label{fig:3d_parallelism}
+\end{figure}
 
-\textbf{Calculating Effective Configuration:}
+\textbf{Worked example.} Consider training a 175-billion parameter model on
+1024 devices. Figure~\ref{fig:3d_example} traces the parameter reduction
+at each level of the hierarchy.
 
-Total model parameters: $175B$
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{images/3d_example.png}
+    \caption{Step-by-step parameter reduction through 3D parallelism for a
+    175B parameter model on 1024 devices. Each level of the hierarchy reduces
+    the parameters each device must work with, from the full 175B at the
+    start to approximately 170M stored per device at the end.}
+    \label{fig:3d_example}
+\end{figure}
 
-Per-device parameters with tensor parallelism: $\frac{175B}{8} \approx 22B$
+We begin with the full 175-billion parameter model. Applying 8-way tensor
+parallelism within each node reduces the parameter footprint per device to
+$\frac{175\text{B}}{8} \approx 22\text{B}$ parameters. Applying 4-way
+pipeline parallelism distributes layers across 4 nodes so each pipeline
+stage holds $\frac{22\text{B}}{4} \approx 5.5\text{B}$ parameters.
+Finally, 32-way FSDP shards those parameters across 32 data-parallel
+replicas, so each device stores only $\frac{5.5\text{B}}{32} \approx 170\text{M}$
+parameters at any given time. The total device count is
+$8 \times 4 \times 32 = 1024$, and a 175-billion parameter model that
+required 2.8 TB of model-state memory is now tractable on devices with
+tens of gigabytes of memory each.
 
-With pipeline parallelism: $\frac{22B}{4} \approx 5.5B$ per device per stage
+The configuration must be tuned jointly: tensor parallelism degree is
+constrained by intra-node bandwidth; pipeline parallelism degree is
+constrained by inter-node bandwidth and the acceptable bubble fraction from
+Equation~\ref{eq:bubble}; data parallelism degree fills the remaining devices.
+Careful load balancing across pipeline stages --- ensuring each stage has
+roughly equal computational cost --- is critical for avoiding stragglers that
+slow the entire pipeline.
 
-With FSDP sharding: $\frac{5.5B}{32} \approx 170M$ parameters stored per device
-
-This makes a 175B parameter model tractable on GPUs with 40-80 GB memory.
 
 \section{Memory Optimizations}
+\label{sec:memory_optimizations}
 
-\subsection{Automatic Mixed Precision (AMP)}
+Parallelization strategies reduce memory by distributing the model across
+devices. A complementary set of techniques reduces the memory each device
+needs in the first place.
 
-Mixed precision training uses lower precision (FP16 or BF16) for most operations while maintaining FP32 for critical operations:
+\subsection{Mixed Precision and Numerical Formats}
+\label{sec:mixed_precision}
 
-\begin{itemize}
-\item \textbf{Forward/backward passes:} FP16 or BF16
-\item \textbf{Master weights:} FP32 copy maintained
-\item \textbf{Gradient accumulation:} FP32
-\item \textbf{Parameter updates:} FP32
-\end{itemize}
+Mixed-precision training uses lower-precision formats for computationally
+intensive operations while retaining full precision where numerical stability
+requires it. The standard configuration keeps forward and backward pass
+computations in 16-bit format while maintaining FP32 master weights and
+performing optimizer updates in FP32.
 
-\textbf{BF16 vs FP16:}
+Two 16-bit formats are in common use. FP16 offers higher mantissa precision
+but a narrow dynamic range, making it susceptible to overflow and underflow
+in deep networks. BF16 shares the same 8-bit exponent as FP32, giving it
+the same dynamic range and making it more robust for training; it has become
+the default for large-scale runs. More recently, 8-bit floating-point (FP8)
+formats have entered production use, halving the memory footprint and
+doubling the theoretical throughput of FP16/BF16 for covered operations.
+FP8 comes in two variants suited to different roles: E4M3 (4 exponent bits,
+3 mantissa bits) is used for weights and activations, where dynamic range
+matters less; E5M2 (5 exponent bits, 2 mantissa bits) is used for gradients,
+which span a wider dynamic range. FP8 training requires per-tensor scaling to
+compensate for the narrow representable range, adding implementation
+complexity, but the memory and throughput gains are substantial enough that
+frontier training runs increasingly use it for the bulk of computation.
 
-\begin{itemize}
-\item \textbf{FP16:} Higher precision, but narrower dynamic range, prone to overflow/underflow
-\item \textbf{BF16:} Same exponent range as FP32, more robust, slightly lower precision
-\end{itemize}
+The general principle is the same across all these formats: match precision
+to the numerical sensitivity of each operation. Optimizer states require
+FP32 because small weight updates would be lost in lower precision. Matrix
+multiplications in the forward pass tolerate FP16 or BF16 without
+measurable loss in model quality. The most compute-intensive operations are
+therefore performed in the lowest precision that maintains training stability.
 
-Modern training typically uses BF16 for better stability.
+\subsection{Gradient Checkpointing}
+\label{sec:gradient_checkpointing}
 
-\subsection{Gradient Checkpointing (Activation Checkpointing)}
+During a standard forward pass, all intermediate activations are stored for
+use in the backward pass. For a model with $L$ layers, this requires $O(L)$
+activation memory, which can be larger than the parameter memory for large
+batch sizes or long sequences.
 
-Activation checkpointing trades computation for memory by not storing all intermediate activations.
+Gradient checkpointing trades compute for memory by storing activations only
+at selected \emph{checkpoint} boundaries rather than after every layer.
+During the backward pass, intermediate activations between checkpoints are
+recomputed from the nearest stored checkpoint rather than retrieved from
+memory. Checkpointing every $k$ layers reduces activation memory from $O(L)$
+to $O(L/k)$ at the cost of one additional forward pass per checkpoint
+interval, typically adding around 30\% to total compute. In practice,
+checkpointing every 3--5 layers reduces activation memory by 3--5$\times$
+with acceptable overhead, and for very long sequences it is often the
+difference between a batch fitting in memory or not.
 
-\textbf{Standard training:} Store all activations during forward pass for use in backward pass
+\subsection{Gradient Clipping}
+\label{sec:gradient_clipping}
 
-\textbf{With checkpointing:}
-\begin{enumerate}
-\item Store activations only at checkpoint boundaries
-\item During backward pass, recompute intermediate activations from checkpoints
-\end{enumerate}
-
-\textbf{Memory reduction:}
-
-For $L$ layers, checkpointing every $k$ layers reduces activation memory from $O(L)$ to $O(L/k)$ at the cost of one additional forward pass.
-
-Typical setting: checkpoint every 3-5 layers, reducing activation memory by 3-5× with ~33\% computational overhead.
-
-\section{Practical Considerations and Best Practices}
-
-\subsection{Choosing Parallelization Strategy}
-
-\noindent\textbf{For smaller models (< 10B parameters):}
-\begin{itemize}
-\item Use DDP or FSDP alone
-\item Simple, effective, good scaling
-\end{itemize}
-
-\noindent\textbf{For medium models (10B-100B parameters):}
-\begin{itemize}
-\item FSDP for data parallelism
-\item Tensor parallelism within nodes if needed
-\item Enable mixed precision and gradient checkpointing
-\end{itemize}
-
-\noindent\textbf{For frontier models (100B+ parameters):}
-\begin{itemize}
-\item 3D parallelism: FSDP + tensor + pipeline
-\item Aggressive memory optimizations
-\item Careful load balancing across pipeline stages
-\end{itemize}
-
-\subsection{Communication Optimization}
-
-\noindent\textbf{Minimize communication volume:}
-\begin{itemize}
-\item Use higher model parallelism within nodes (high bandwidth)
-\item Use lower pipeline parallelism across nodes (lower bandwidth)
-\item Overlap communication with computation when possible
-\end{itemize}
-
-\noindent\textbf{Network topology awareness:}
-\begin{itemize}
-\item Place tensor parallel groups on same node
-\item Minimize cross-node communication for fine-grained operations
-\item Use all-reduce rings that match physical topology
-\end{itemize}
-
-\subsection{Debugging Distributed Training}
-
-Distributed training failures are complex:
-
-\begin{itemize}
-\item \textbf{Gradient synchronization errors:} Check for numerical instability, use gradient clipping
-\item \textbf{Out-of-memory:} Profile memory usage, increase parallelism degree, enable more aggressive checkpointing
-\item \textbf{Slow training:} Profile communication overhead, check for stragglers, optimize batch size
-\item \textbf{Convergence issues:} Verify gradient synchronization is correct, check learning rate scaling
-\end{itemize}
-
-\subsection{Training Efficiency Metrics}
-
-\textbf{Model FLOPs Utilization (MFU):}
-MFU measures the fraction of the hardware's theoretical peak performance that is utilized for actual model computation (excluding recomputation overhead).
+Large-scale training is susceptible to gradient explosions --- occasional
+abnormally large gradient updates that destabilize training and can be
+difficult to recover from. Gradient clipping addresses this by rescaling
+the gradient vector when its norm exceeds a threshold $\tau$:
 
 \begin{equation}
-\text{MFU} = \frac{\text{Observed FLOPs/sec}}{\text{Theoretical Peak FLOPs/sec}}
+\label{eq:grad_clip}
+g \leftarrow g \cdot \min\!\left(1,\, \frac{\tau}{\|g\|}\right)
 \end{equation}
 
-Well-optimized large-scale training typically achieves 40-60\% MFU \cite{chowdhery2023palm}.
+This preserves the direction of the gradient while bounding its magnitude.
+Values of $\tau$ between 0.5 and 1.0 are typical for large transformer
+training. Gradient clipping is applied after gradient synchronization across
+devices, so it operates on the globally averaged gradient rather than local
+per-device gradients.
 
-\noindent\textbf{Factors affecting efficiency:}
-\begin{itemize}
-\item Communication overhead
-\item Pipeline bubbles
-\item Memory bandwidth limitations
-\item Load imbalance across devices
-\end{itemize}
+\section{Practical Considerations}
+\label{sec:practical}
+
+\subsection{Choosing a Parallelization Strategy}
+\label{sec:choosing_parallelism}
+
+The choice of parallelization strategy depends primarily on model size and
+available hardware. For models below roughly 10 billion parameters, DDP or
+FSDP alone is typically sufficient: the model fits within the combined memory
+of a modest cluster, and the simplicity of pure data parallelism is a
+significant advantage. Mixed precision and gradient checkpointing should be
+enabled regardless.
+
+For models in the 10--100 billion parameter range, FSDP handles memory
+reduction and tensor parallelism within nodes can provide additional capacity
+if needed. The communication overhead of FSDP becomes significant at this
+scale, so overlapping All-Gather operations with computation (prefetching
+the next layer's parameters during the current layer's computation) becomes
+important for efficiency.
+
+For frontier models above 100 billion parameters, full 3D parallelism is
+generally necessary. The configuration must be tuned jointly: tensor
+parallelism degree is constrained by intra-node bandwidth; pipeline parallelism
+degree is constrained by inter-node bandwidth and the acceptable bubble
+fraction; data parallelism degree fills the remaining devices. Careful
+load balancing across pipeline stages --- ensuring each stage has roughly
+equal computational cost --- is critical for avoiding stragglers.
+
+\subsection{Training Efficiency}
+\label{sec:mfu}
+
+The standard metric for large-scale training efficiency is Model FLOPs
+Utilization (MFU): the fraction of the hardware's theoretical peak
+throughput actually used for model computation, excluding recomputation
+overhead:
+
+\begin{equation}
+\label{eq:mfu}
+\text{MFU} = \frac{\text{Observed FLOPs/sec}}{\text{Peak FLOPs/sec}}
+\end{equation}
+
+Well-optimized large-scale training typically achieves 40--60\%
+MFU~\cite{chowdhery2023palm}. The gap from 100\% reflects communication
+overhead, pipeline bubbles, memory bandwidth constraints, and load imbalance.
+Improving MFU by a few percentage points on a large cluster translates
+directly to reduced training time and cost, making it a key optimization
+target.
 
 \section{Conclusion}
+\label{sec:pretraining_conclusion}
 
-Training generative AI models at scale requires sophisticated orchestration of parallelization strategies, communication primitives, and memory optimizations. The key insights from this chapter include:
+This chapter has developed the engineering foundations that make large-scale
+generative AI training possible. The central tension throughout is between
+memory and communication: every technique that reduces memory per device ---
+FSDP, tensor parallelism, mixed precision, gradient checkpointing --- does
+so either by distributing data across devices, which increases communication,
+or by recomputing rather than storing, which increases compute. There is no
+free lunch, and the right configuration is always a trade-off calibrated
+to the specific cluster topology, model architecture, and time budget.
 
-\textbf{Necessity of distribution:} Modern models are far too large for single GPUs, making distributed training essential rather than optional.
+Three principles organize the choices. First, match parallelism granularity
+to interconnect bandwidth: fine-grained tensor parallelism belongs within
+high-bandwidth nodes, coarser pipeline parallelism belongs across nodes.
+Second, eliminate redundancy before adding complexity: ZeRO/FSDP should
+be the baseline before introducing model parallelism. Third, use the lowest
+precision that maintains training stability: the transition from FP32 to
+BF16 to FP8 follows the same logic at each step.
 
-\textbf{Memory vs communication trade-offs:} Techniques like FSDP reduce memory by increasing communication, while tensor parallelism requires high bandwidth within nodes.
-
-\textbf{Hierarchical parallelism:} Combining data, tensor, and pipeline parallelism enables training at unprecedented scales.
-
-\textbf{Collective communication:} Understanding All-Reduce, All-Gather, and Reduce-Scatter is fundamental to understanding how distributed training works.
-
-\textbf{Continuous optimization:} Efficient large-scale training requires careful tuning of batch sizes, micro-batching, checkpointing, and parallelization degrees.
-
-The field continues to evolve rapidly. Innovations in communication algorithms, memory management, and novel parallelization strategies continue to push the boundaries of what models can be trained. The techniques described here represent current best practices, but new approaches emerge regularly as researchers and engineers tackle ever-larger models.
-
-Understanding these scaling strategies provides insight not just into how models are trained, but into the engineering complexity underlying modern AI systems. The massive computational requirements shape everything from model architecture decisions to the pace of AI capability advancement. As models continue to grow, these distributed training techniques will remain at the foundation of generative AI progress.
+Chapter~6 builds on these foundations by examining what happens after
+pretraining: how models are fine-tuned on specific tasks, aligned with
+human preferences, and adapted to deployment constraints that are the
+inverse of the training-time concerns developed here --- where the challenge
+shifts from fitting the model in a cluster to fitting it on a single
+inference device.
 
 \chapter{Adapting Pre-trained Models}
 
