@@ -3830,11 +3830,21 @@ tens of gigabytes of memory each.
 
 The configuration must be tuned jointly: tensor parallelism degree is
 constrained by intra-node bandwidth; pipeline parallelism degree is
-constrained by inter-node bandwidth and the acceptable bubble fraction from
-Equation~\ref{eq:bubble}; data parallelism degree fills the remaining devices.
-Careful load balancing across pipeline stages --- ensuring each stage has
-roughly equal computational cost --- is critical for avoiding stragglers that
-slow the entire pipeline.
+constrained by inter-node bandwidth and the acceptable bubble fraction ---
+the fraction of time each device spends idle despite micro-batching:
+
+\begin{equation}
+\label{eq:bubble}
+\text{Bubble fraction} \approx \frac{p - 1}{m}
+\end{equation}
+
+where $p$ is the number of pipeline stages and $m$ is the number of
+micro-batches. With $p = 4$ stages and $m = 32$ micro-batches, for example,
+the bubble fraction is under 10\%. Data parallelism degree fills the remaining
+devices after tensor and pipeline degrees are fixed. Careful load balancing
+across pipeline stages --- ensuring each stage has roughly equal computational
+cost --- is critical for avoiding stragglers that slow the entire pipeline.
+
 
 
 \section{Memory Optimizations}
