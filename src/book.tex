@@ -4933,6 +4933,7 @@ there, because a model that has been aligned but has lost its general
 capabilities is not aligned in any useful sense.
 
 \chapter{Optimizing Generative AI Inference}
+\label{ch:inference}
 
 \section{Introduction}
 \label{sec:inference_intro}
@@ -6314,16 +6315,31 @@ subtracting it does not bias the gradient estimate. To see why, note that:
 \label{eq:baseline_proof}
 \end{align}
 
-Choosing $b(s_t) = V^\pi(s_t)$ gives the advantage-weighted policy
-gradient:
+The advantage can be derived formally by introducing a \emph{baseline} $b(s_t)$ into the policy gradient expression. Starting from the standard reward-to-go formulation:
+\begin{equation}
+\label{eq:pg_starting_point}
+\nabla_\theta J(\theta) = \mathbb{E}_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t) G_t \right]
+\end{equation}
 
+Since we have proven in Equation~\ref{eq:baseline_proof} that the expectation of the gradient multiplied by a state-dependent baseline is zero, we can subtract $b(s_t)$ from the return $G_t$ without changing the overall expectation:
+\begin{equation}
+\label{eq:pg_with_baseline}
+\nabla_\theta J(\theta) = \mathbb{E}_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t) (G_t - b(s_t)) \right]
+\end{equation}
+
+Choosing the state-value function as the baseline, $b(s_t) = V^\pi(s_t)$, is a natural choice because the return $G_t$ is an unbiased sample of the action-value function $Q^\pi(s_t, a_t)$. Thus, the term in parentheses becomes an empirical estimate of the advantage:
+\begin{equation}
+G_t - V^\pi(s_t) \approx Q^\pi(s_t, a_t) - V^\pi(s_t) = A^\pi(s_t, a_t)
+\end{equation}
+
+Substituting this into Equation~\ref{eq:pg_with_baseline} yields the \textbf{advantage-weighted policy gradient}:
 \begin{equation}
 \label{eq:advantage_pg}
-\nabla_\theta J(\theta)
-= \mathbb{E}_{\tau \sim p_\theta(\tau)}\!\left[
-    \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t)\,
-    A^\pi(s_t, a_t) \right]
+\nabla_\theta J(\theta) = \mathbb{E}_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t) A^\pi(s_t, a_t) \right]
 \end{equation}
+
+This substitution centers the reinforcement signal. While $G_t$ is always positive in many environments, $A^\pi(s_t, a_t)$ is positive only for actions that performed better than the state's average, and negative for those that performed worse, significantly reducing gradient variance.
+
 
 This is the policy gradient theorem: the gradient of the expected return
 equals the expected advantage-weighted log-probability gradient.
@@ -6472,1020 +6488,833 @@ with billions of parameters. The actor-critic architecture, the advantage
 function, and the policy gradient theorem carry over unchanged; what
 changes is the scale and the source of the reward signal.
 
-
 \chapter{Reinforcement Learning from Human Feedback}
 \label{ch:rlhf}
 
 \section{Introduction}
+\label{sec:rlhf_intro}
 
-In previous chapters, we explored how large language models are pre-trained on vast text corpora and fine-tuned for specific tasks. However, a fundamental challenge remains: how do we align these models with complex human values that are difficult to specify programmatically? 
+The previous chapters developed the machinery for training large language
+models and adapting them to specific tasks. A deeper challenge remains:
+how do we align these models with the complex, context-dependent values
+that humans actually care about? A helpful assistant should be informative
+without being verbose, honest without being blunt, creative without
+confabulating. These properties are subjective, intertwined, and nearly
+impossible to encode as explicit rules or as a supervised learning target.
 
-Consider the task of building a helpful AI assistant. We want it to be informative but not verbose, honest but tactful, creative but not confabulating. These preferences are subjective, context-dependent, and nearly impossible to encode in explicit reward functions. A response that's perfect for one user might be inappropriate for another. How do we teach models to navigate this nuanced landscape of human preferences?
+A further difficulty is that helpfulness and harmlessness are in tension.
+A model optimized purely to be helpful will eventually produce harmful
+outputs when users request them; a model optimized purely to refuse
+potentially harmful requests will become evasively unhelpful. Neither
+extreme is acceptable. The reward signal for alignment must capture both
+dimensions simultaneously, and the training procedure must balance them
+without collapsing to either extreme.
 
-Reinforcement Learning from Human Feedback (RLHF) provides an elegant solution: rather than attempting to specify what we want through explicit rules, we show the model examples of what we prefer and let it learn the underlying patterns. This approach has become the cornerstone of modern AI alignment, powering systems like GPT-4, Claude, and Gemini \cite{ouyang2022training, bai2022}.
+Reinforcement Learning from Human Feedback (RLHF) addresses these
+challenges by replacing handcrafted reward functions with a reward model
+learned from human judgments~\cite{christiano2017,ouyang2022training}.
+Rather than specifying what good behavior looks like, we show the model
+examples of relative preference --- ``response A is better than response B''
+--- and let it learn the underlying patterns. This approach has become the
+cornerstone of modern AI alignment.
 
+The key insight is that humans are better at comparing outcomes than
+specifying objectives~\cite{christiano2017}. Consider teaching someone to
+make a good cup of coffee. Specifying the exact temperature, brewing time,
+and coffee-to-water ratio is difficult, and the numbers may not capture
+what you actually value. But presenting two cups and saying ``this one is
+better'' is natural and reliable. After enough such comparisons, the student
+learns what you prefer. RLHF applies exactly this principle to language
+model training.
 
+One might ask: if we have examples of good responses, why not simply
+fine-tune on those examples using supervised learning? Several reasons
+motivate the preference-based approach. Generating high-quality
+demonstrations requires humans to write complete, polished responses from
+scratch, which is expensive and slow. Expressing a preference between two
+responses is much faster and cheaper. Beyond cost, human judgments are
+inherently comparative --- people struggle with consistent absolute ratings
+but agree much more reliably when comparing two options directly. Finally,
+supervised learning teaches the model to imitate training data, constraining
+it to the style and quality of whatever demonstrations are available. RL
+optimization allows the model to explore diverse ways of achieving high
+reward, potentially exceeding the quality of any individual demonstration.
 
-\subsection{The Core Insight}
+The RLHF pipeline consists of three stages, each addressing a different
+aspect of the alignment problem: supervised fine-tuning to establish basic
+instruction-following capability, reward model training to learn a reward
+function from human preferences, and reinforcement learning to optimize the
+policy against that reward function. We examine each in turn.
 
-RLHF rests on a simple but powerful observation: \textbf{humans are better at comparing outcomes than specifying objectives} \cite{christiano2017}. 
+\section{The RLHF Pipeline}
+\label{sec:rlhf_pipeline}
 
-\textbf{Analogy:} Imagine you're teaching someone to make coffee. You could try to specify the exact temperature, brewing time, and coffee-to-water ratio---but these numbers might not capture what makes a "good" cup. Alternatively, you could present two cups and say "this one is better." After enough comparisons, your student learns what you value: perhaps you prefer stronger coffee, or a smoother finish, or particular flavor notes.
+\subsection{Stage 1: Supervised Fine-Tuning}
+\label{sec:rlhf-sft}
 
-RLHF applies this principle to AI training:
-\begin{itemize}
-\item Instead of reward = +1 for "good" text (but what is "good"?), we collect comparisons: "Response A is better than Response B"
-\item From these comparisons, we learn a reward model that predicts human preferences
-\item We then optimize the language model to generate text that scores highly on this learned reward function
-\end{itemize}
+Applying reinforcement learning directly to a pre-trained base model faces
+a bootstrapping problem. A base model trained on internet text predicts
+likely continuations; it does not naturally follow instructions or produce
+complete, well-structured responses. If the model's initial outputs are
+incoherent, the reward signal provides no useful gradient information ---
+the policy must first achieve basic competence before RL can improve it.
 
-\subsection{Why Not Just Supervised Learning?}
+Supervised fine-tuning (SFT) solves this by training the model on
+high-quality demonstrations before RL begins. The SFT dataset consists of
+$(x, y)$ pairs where $x$ is a prompt and $y$ is a carefully written
+response. These demonstrations are created by human contractors following
+detailed quality guidelines, curated from existing high-quality sources,
+or produced by augmenting existing responses to meet quality standards.
+Quality matters far more than quantity; a typical SFT dataset contains
+tens of thousands of examples, small by pre-training standards, but each
+carefully crafted to exhibit the target behavior.
 
-You might wonder: if we have examples of good responses, why not simply fine-tune the model on those examples using supervised learning? Why introduce the complexity of reinforcement learning?
-
-Several reasons motivate the RL approach:
-
-\textbf{Sample Efficiency:} Generating high-quality demonstrations is expensive---it requires expert humans to write complete, polished responses. Preference comparisons are much cheaper: humans can quickly judge "A is better than B" even when they couldn't easily write the perfect response themselves. This makes preference data 5-10$\times$ cheaper to collect than demonstrations.
-
-\textbf{Preference is Relative:} Human judgments are inherently comparative. When rating a response on an absolute scale (1-5 stars), people struggle with consistency. But when comparing two responses, agreement is much higher. RLHF's pairwise comparisons align with how humans naturally evaluate quality.
-
-\textbf{Exploration and Diversity:} Supervised learning teaches the model to imitate the training data. If demonstrations come from a narrow set of writing styles, the model learns that narrow distribution. RL optimization, by contrast, allows the model to explore diverse ways of achieving high reward---potentially finding better approaches than any single demonstrator used.
-
-\textbf{Optimization Pressure:} Supervised fine-tuning says "be like this example." RLHF says "maximize this objective." The optimization pressure from RL can push the model to better extremes of the desired behavior than any individual demonstration exhibits.
-
-That said, RLHF doesn't replace supervised learning---it builds on it. As we'll see, the RLHF pipeline begins with supervised fine-tuning to give the model a strong foundation before applying RL.
-
-\section{The RLHF Pipeline: Three-Stage Training}
-
-RLHF consists of three distinct training stages, each addressing a different challenge in the alignment problem:
-
-\begin{enumerate}
-\item \textbf{Stage 1 - Supervised Fine-Tuning (SFT):} Train the base model on high-quality demonstrations to establish basic instruction-following capability
-\item \textbf{Stage 2 - Reward Modeling:} Learn a reward function from human preference comparisons
-\item \textbf{Stage 3 - RL Optimization:} Use reinforcement learning to optimize the policy according to the learned reward model
-\end{enumerate}
-
-Let's examine each stage in detail, building intuition before diving into the mathematics.
-
-\subsection{Stage 1: Supervised Fine-Tuning (SFT)}
-
-\subsubsection{The Initialization Problem}
-
-Imagine trying to teach a student calculus when they don't yet understand basic arithmetic. The learning task becomes intractable---you need foundations before advancing to complex topics. Similarly, applying RL directly to a pre-trained language model faces a bootstrapping problem:
-
-\begin{itemize}
-\item Pre-trained models predict the next token based on internet text---they can complete sentences but don't naturally follow instructions
-\item RL requires generating complete responses to measure rewards
-\item If initial responses are nonsensical, reward signals are uninformative
-\item The policy needs enough initial competence to produce meaningful variations for learning
-\end{itemize}
-
-\textbf{Supervised Fine-Tuning solves this bootstrapping problem} by teaching the model basic instruction-following before RL begins.
-
-\subsubsection{SFT Data Collection}
-
-The SFT dataset consists of high-quality demonstrations: $(x, y)$ pairs where $x$ is a prompt and $y$ is a desired completion.
-
-\textbf{Example data points:}
-\begin{itemize}
-\item Prompt ($x$): "Explain quantum entanglement to a 10-year-old."
-\item Response ($y$): "Imagine you have two magic coins. When you flip one and it lands on heads, the other coin---no matter how far away---instantly lands on heads too! That's similar to quantum entanglement: particles that are 'entangled' affect each other instantly, even across huge distances. Scientists are still figuring out why, but it's one of the strangest things in nature!"
-\end{itemize}
-
-These demonstrations are typically created by:
-\begin{itemize}
-\item \textbf{Human contractors:} Writers or domain experts produce responses following detailed guidelines
-\item \textbf{Curated existing data:} High-quality Q\&A from Stack Overflow, Reddit, customer service logs, etc.
-\item \textbf{Augmentation:} Existing responses revised to meet quality standards
-\end{itemize}
-
-Quality matters more than quantity. The SFT dataset is typically small by pre-training standards---10,000 to 100,000 examples---but each is carefully crafted.
-
-\subsubsection{The SFT Objective}
-
-We fine-tune the pre-trained model $\pi_{\theta_0}$ by maximizing the log-likelihood of demonstrated responses:
+The SFT objective is standard maximum likelihood. We fine-tune the
+pre-trained model $\pi_{\theta_0}$ by maximizing the log-likelihood of
+demonstrated responses:
 
 \begin{equation}
-\mathcal{L}_{\text{SFT}}(\theta) = \mathbb{E}_{(x,y) \sim \mathcal{D}_{\text{SFT}}} \left[ \log \pi_\theta(y|x) \right]
+\label{eq:sft_objective}
+\mathcal{L}_{\text{SFT}}(\theta)
+= \mathbb{E}_{(x,y) \sim \mathcal{D}_{\text{SFT}}}
+    \left[ \log \pi_\theta(y \mid x) \right]
 \end{equation}
 
-This is standard supervised learning: the model learns to predict each token $y_t$ in the response given the prompt $x$ and previous tokens $y_{<t}$.
+For a response of length $T$, the log-likelihood decomposes
+token-by-token using the chain rule:
 
-\textbf{Expanding the likelihood:} For a response of length $T$:
 \begin{equation}
-\log \pi_\theta(y|x) = \sum_{t=1}^{T} \log \pi_\theta(y_t | x, y_{<t})
+\label{eq:sft_chain}
+\log \pi_\theta(y \mid x)
+= \sum_{t=0}^{T-1} \log \pi_\theta(y_t \mid x, y_{<t})
 \end{equation}
 
-The model is trained to maximize this sum across all demonstration pairs.
+The model is trained to maximize this sum across all demonstration pairs,
+learning to predict each response token given the prompt and all preceding
+response tokens.
 
-\subsubsection{What SFT Achieves}
-
-After SFT, the model has learned:
-\begin{itemize}
-\item \textbf{Format adherence:} How to structure responses appropriately
-\item \textbf{Instruction following:} Basic ability to interpret and execute prompts
-\item \textbf{Domain conventions:} Writing style, tone, level of detail expected
-\item \textbf{Task distribution:} What kinds of requests to expect
-\end{itemize}
-
-Critically, the SFT model $\pi^{\text{SFT}}$ becomes our \textbf{reference point}. In stage 3, we'll prevent the RL-optimized policy from drifting too far from $\pi^{\text{SFT}}$---ensuring the model remains fluent and coherent even as we optimize for preferences.
+The SFT model $\pi^{\text{SFT}}$ serves two roles after training. It
+provides the policy initialization for Stage 3, giving the RL optimizer a
+competent starting point. And it becomes the \emph{reference policy} ---
+during RL, we will prevent the optimized policy from drifting too far from
+$\pi^{\text{SFT}}$, ensuring that fluency and coherence are preserved even
+as we optimize for human preferences.
 
 \subsection{Stage 2: Reward Model Training}
+\label{sec:reward_model}
 
-The second stage addresses a fundamental question: \textbf{how do we convert human preferences into a reward signal for RL?}
-
-\subsubsection{From Ratings to Comparisons}
-
-Early attempts at learning from human feedback used absolute ratings \cite{christiano2017}:
-\begin{itemize}
-\item "Rate this response from 1-10"
-\item "Is this response helpful? [Yes/No]"
-\item "Rate the response on helpfulness, honesty, and harmlessness [1-5 each]"
-\end{itemize}
-
-These approaches struggled with several problems:
-
-\textbf{Scale inconsistency:} Different raters use scales differently. One person's "7/10" might equal another's "9/10." This noise makes learning difficult.
-
-\textbf{Lack of context:} An absolute rating doesn't reveal what could be improved. Why is this a 7 and not a 9? What would make it better?
-
-\textbf{Cognitive difficulty:} Humans find absolute judgments hard. Is a response "8/10 helpful"? What does that even mean precisely?
-
-\textbf{Comparative judgments solve these issues.} Instead of rating responses absolutely, we present pairs and ask: "Which response is better?"
-
-This is much easier for humans:
-\begin{itemize}
-\item More reliable agreement between raters
-\item Natural and intuitive
-\item Reveals relative quality directly
-\item Implicitly captures what makes one response preferable
-\end{itemize}
+The second stage converts human preference judgments into a scalar reward
+function that the RL optimizer can use.
 
 \subsubsection{Preference Data Collection}
+\label{sec:preference_data}
 
-For each prompt $x$ in the training set:
+For each prompt $x$ in the training set, multiple candidate responses are
+sampled from $\pi^{\text{SFT}}$:
 
-\begin{enumerate}
-\item \textbf{Generate candidate responses:} Sample multiple completions from $\pi^{\text{SFT}}$:
-\begin{align}
-y_1 &\sim \pi^{\text{SFT}}(\cdot | x) \\
-y_2 &\sim \pi^{\text{SFT}}(\cdot | x) \\
-&\vdots \nonumber \\
-y_k &\sim \pi^{\text{SFT}}(\cdot | x)
-\end{align}
+\begin{equation}
+\label{eq:response_sampling}
+y_1, y_2, \ldots, y_k \sim \pi^{\text{SFT}}(\cdot \mid x)
+\end{equation}
 
-Typically $k=4$ to $k=9$ responses per prompt.
+with typically $k = 4$ to $9$ responses per prompt. Human annotators are
+then shown pairs of responses and asked to select the better one. Each
+annotation records a triple $(x, y_w, y_l)$ where $y_w$ is the preferred
+(winning) response and $y_l$ is the less preferred (losing) response.
+These triples are collected into the preference dataset
+$\mathcal{D}_{\text{pref}}$.
 
-\item \textbf{Human annotation:} Present pairs of responses to human raters who select the better response:
-\begin{itemize}
-\item Show prompt $x$ and two responses $y_i, y_j$
-\item Rater chooses: $y_w \succ y_l$ (winner $y_w$ preferred over loser $y_l$)
-\item Can include "equally good" or "both bad" options
-\end{itemize}
+Annotators receive detailed guidelines specifying what ``better'' means
+for the target application. For a general-purpose assistant, this typically
+covers helpfulness (does the response adequately address the prompt?),
+harmlessness (does it avoid harmful or inappropriate content?), and honesty
+(does it acknowledge uncertainty and avoid fabrication?). The specific
+criteria are application-dependent and their precise formulation
+substantially affects what the reward model learns.
 
-\item \textbf{Store comparison:} Record $(x, y_w, y_l)$ in the preference dataset $\mathcal{D}_{\text{pref}}$
-\end{enumerate}
-
-\textbf{Annotation guidelines matter.} Raters receive detailed instructions about what makes a response "better":
-\begin{itemize}
-\item Helpfulness: Does it answer the question? Is it informative?
-\item Harmlessness: Does it avoid harmful, biased, or inappropriate content?
-\item Honesty: Does it acknowledge uncertainty? Avoid hallucination?
-\end{itemize}
-
-The specific criteria depend on the application---a creative writing assistant might prioritize originality, while a factual Q\&A system emphasizes accuracy.
+Early approaches to learning from human feedback used absolute ratings ---
+``rate this response from 1 to 10'' --- but these proved unreliable.
+Different annotators use scales inconsistently, and humans find it
+cognitively difficult to assign absolute scores to open-ended text.
+Pairwise comparisons are far more reliable: inter-annotator agreement
+is substantially higher when raters choose between two options than when
+they assign numerical scores independently.
 
 \subsubsection{The Bradley-Terry Model}
+\label{sec:bradley_terry}
 
-How do we convert preference comparisons into a learned reward function? We need a probabilistic model of human preferences.
-
-The \textbf{Bradley-Terry model} provides the mathematical framework. It assumes that each response has an underlying "quality" or "utility" captured by a scalar reward $r(x,y)$. The probability that response $y_w$ is preferred over $y_l$ is:
-
-\begin{equation}
-P(y_w \succ y_l | x) = \frac{\exp(r(x, y_w))}{\exp(r(x, y_w)) + \exp(r(x, y_l))}
-\end{equation}
-
-This can be simplified using the sigmoid function $\sigma(z) = \frac{1}{1 + \exp(-z)}$:
+We need a probabilistic model of human preferences to turn pairwise
+comparisons into a learnable objective. The Bradley-Terry
+model~\cite{bradley1952rank} provides this. It assumes each response has
+an underlying scalar quality captured by a reward $r(x, y)$, and that the
+probability of preferring $y_w$ over $y_l$ is:
 
 \begin{equation}
-P(y_w \succ y_l | x) = \sigma(r(x, y_w) - r(x, y_l))
+\label{eq:bradley_terry}
+P(y_w \succ y_l \mid x)
+= \frac{\exp(r(x, y_w))}{\exp(r(x, y_w)) + \exp(r(x, y_l))}
 \end{equation}
 
-\textbf{Intuition:} If $r(x, y_w) \gg r(x, y_l)$ (winner much better), then $\sigma(\text{large positive}) \approx 1$ (almost certainly prefer winner). If rewards are equal, $\sigma(0) = 0.5$ (50-50 chance). The model captures the intuition that larger reward differences make preferences more deterministic.
-
-\textbf{Why this functional form?} The Bradley-Terry model satisfies desirable properties:
-\begin{itemize}
-\item \textbf{Monotonicity:} Higher reward $\Rightarrow$ higher probability of preference
-\item \textbf{Symmetry:} $P(y_1 \succ y_2) + P(y_2 \succ y_1) = 1$
-\item \textbf{Transitivity} (approximately): If $r(x,y_1) > r(x,y_2) > r(x,y_3)$, then preferences follow a consistent ranking
-\end{itemize}
-
-\subsubsection{Reward Model Architecture}
-
-We parameterize the reward function as a neural network $r_\phi(x, y)$ that outputs a scalar score. The architecture typically:
-
-\begin{enumerate}
-\item \textbf{Shares backbone with SFT model:} Initialize from $\pi^{\text{SFT}}$ weights
-\item \textbf{Processes concatenated input:} Encode $[x, y]$ as a sequence
-\item \textbf{Replaces language modeling head:} Instead of predicting next token probabilities, output a single scalar value
-\end{enumerate}
-
-\textbf{Architectural details:}
-\begin{itemize}
-\item Input: Token sequence $[x, y]$ of length $T$
-\item Backbone: Transformer encoder produces hidden states $\mathbf{h}_1, \ldots, \mathbf{h}_T$
-\item Pooling: Extract final hidden state $\mathbf{h}_T$ (or use attention pooling over all states)
-\item Value head: Linear projection $r_\phi(x,y) = \mathbf{w}^T \mathbf{h}_T$
-\end{itemize}
-
-This architecture allows the reward model to consider the entire response context when computing the reward.
-
-\subsubsection{Training Objective}
-
-We train the reward model to maximize the likelihood of observed preferences. For each comparison $(x, y_w, y_l)$:
+This can be written more compactly using the sigmoid function
+$\sigma(z) = 1 / (1 + \exp(-z))$:
 
 \begin{equation}
-\mathcal{L}_{\text{RM}}(\phi) = -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}_{\text{pref}}} \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l)) \right]
+\label{eq:bradley_terry_sigmoid}
+P(y_w \succ y_l \mid x) = \sigma(r(x, y_w) - r(x, y_l))
 \end{equation}
 
-\textbf{Derivation:} This is maximum likelihood estimation. We want to maximize:
+The model captures the intuition that larger reward differences produce
+more deterministic preferences: when $r(x, y_w) \gg r(x, y_l)$ the
+sigmoid approaches 1 (near-certain preference for the winner); when
+rewards are equal the sigmoid is 0.5 (no preference). The model satisfies
+monotonicity (higher reward implies higher preference probability),
+symmetry ($P(y_w \succ y_l) + P(y_l \succ y_w) = 1$), and approximate
+transitivity.
+
+Note that the absolute values of rewards are arbitrary under the
+Bradley-Terry model --- only differences matter. Adding any constant $c$
+to all rewards leaves preferences unchanged:
+$\sigma((r_w + c) - (r_l + c)) = \sigma(r_w - r_l)$. This is why we
+optimize differences rather than absolute scores.
+
+\subsubsection{Reward Model Architecture and Training}
+\label{sec:rm_architecture}
+
+We parameterize the reward function as a neural network $r_\phi(x, y)$
+that outputs a scalar score. The architecture is initialized from
+$\pi^{\text{SFT}}$ weights, which already encode rich representations of
+language quality. The language modeling head is replaced with a linear
+projection onto a single scalar value; the rest of the transformer
+backbone processes the concatenated prompt-response sequence and the
+final hidden state is projected to produce $r_\phi(x, y)$.
+
+Training maximizes the likelihood of observed preferences. For each
+comparison $(x, y_w, y_l)$ in $\mathcal{D}_{\text{pref}}$, we want the
+model to assign higher reward to $y_w$ than to $y_l$. Taking the negative
+log-likelihood of the Bradley-Terry model gives the training objective:
+
 \begin{equation}
-P(\text{observed preferences} | \phi) = \prod_{(x,y_w,y_l)} P(y_w \succ y_l | x, \phi)
+\label{eq:rm_loss}
+\mathcal{L}_{\text{RM}}(\phi)
+= -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}_{\text{pref}}}
+    \left[ \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l)) \right]
 \end{equation}
 
-Taking the logarithm and noting that maximizing is equivalent to minimizing the negative log-likelihood:
+To see why this is maximum likelihood, note that we want to maximize the
+probability of the observed preferences:
+
 \begin{align}
-\mathcal{L}_{\text{RM}}(\phi) &= -\sum_{(x,y_w,y_l)} \log P(y_w \succ y_l | x, \phi) \nonumber \\
-&= -\sum_{(x,y_w,y_l)} \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l))
+\label{eq:rm_mle}
+\max_\phi\; P(\text{observed preferences} \mid \phi)
+&= \max_\phi \prod_{(x,y_w,y_l)} P(y_w \succ y_l \mid x, \phi) \notag \\
+&= \max_\phi \prod_{(x,y_w,y_l)}
+    \sigma(r_\phi(x, y_w) - r_\phi(x, y_l))
 \end{align}
 
-\textbf{Binary cross-entropy perspective:} This loss is equivalent to binary classification where:
-\begin{itemize}
-\item Positive class: $y_w$ is preferred
-\item Negative class: $y_l$ is preferred
-\item Logits: $r_\phi(x, y_w) - r_\phi(x, y_l)$
-\item Target: Always 1 (prefer the winner)
-\end{itemize}
+Taking the logarithm and negating to convert maximization to minimization:
 
-\subsubsection{Reward Model Properties and Diagnostics}
-
-After training, we can evaluate the reward model's quality:
-
-\textbf{Accuracy:} On held-out preference comparisons, what fraction does the model correctly rank?
 \begin{equation}
-\text{Accuracy} = \frac{1}{|\mathcal{D}_{\text{test}}|} \sum_{(x,y_w,y_l)} \mathbb{I}[r_\phi(x,y_w) > r_\phi(x,y_l)]
+\label{eq:rm_loss_derived}
+\mathcal{L}_{\text{RM}}(\phi)
+= -\sum_{(x,y_w,y_l)}
+    \log \sigma(r_\phi(x, y_w) - r_\phi(x, y_l))
 \end{equation}
 
-Typical values: 65-75\% accuracy (compared to 50\% random, 70-80\% human-human agreement).
+This is equivalent to binary cross-entropy where the positive class is
+``$y_w$ is preferred'', the logit is $r_\phi(x, y_w) - r_\phi(x, y_l)$,
+and the target is always 1. After training, reward model quality is
+assessed on held-out preference pairs:
 
-\textbf{Calibration:} Do the predicted probabilities match empirical frequencies? If the model assigns $\sigma(r_w - r_l) = 0.8$ to many pairs, are 80\% of those actually preferred?
+\begin{equation}
+\label{eq:rm_accuracy}
+\text{Accuracy}
+= \frac{1}{|\mathcal{D}_{\text{test}}|}
+    \sum_{(x, y_w, y_l)} \mathbb{I}[r_\phi(x, y_w) > r_\phi(x, y_l)]
+\end{equation}
 
-\textbf{Ranking consistency:} For sets of responses $\{y_1, \ldots, y_k\}$, do the reward rankings agree with human preference rankings?
-
-\textbf{Important note on reward scale:} The absolute value of $r_\phi(x,y)$ is arbitrary---only differences matter. We could add any constant $c$ to all rewards without changing preferences: $\sigma((r_w + c) - (r_l + c)) = \sigma(r_w - r_l)$. This is why we optimize for relative reward differences, not absolute scores.
+Typical values are 65--75\%, compared to 50\% for a random baseline and
+70--80\% for human-human agreement on the same comparisons.
 
 \subsection{Stage 3: Reinforcement Learning Fine-Tuning}
+\label{sec:rl_finetuning}
 
-Now comes the RL stage: we use the learned reward model to fine-tune the policy to generate responses humans prefer.
+The third stage uses the learned reward model to fine-tune the policy
+toward generating responses humans prefer.
 
 \subsubsection{The RL Problem Formulation}
+\label{sec:rlhf_formulation}
 
-We can frame language generation as an RL problem:
+Language generation maps naturally onto the RL framework from
+Chapter~\ref{ch:rl}. The state at step $t$ is the prompt together with
+all tokens generated so far: $s_t = (x, y_{<t})$. The action is the
+next token: $a_t = y_t$. The state transition is deterministic ---
+appending $y_t$ to $y_{<t}$ gives $s_{t+1}$. An episode is one complete
+response generation. The reward is sparse: the reward model provides a
+scalar $r_\phi(x, y)$ only at the end of the episode, after the full
+response $y$ has been generated.
 
-\begin{itemize}
-\item \textbf{State} $s_t = (x, y_{<t})$: The prompt and tokens generated so far
-\item \textbf{Action} $a_t = y_t$: The next token to generate
-\item \textbf{State transition:} Deterministic---$s_{t+1} = (x, y_{\leq t})$ after appending $y_t$
-\item \textbf{Episode:} One complete response generation
-\item \textbf{Reward:} Provided by the reward model (sparse---only at end of episode)
-\end{itemize}
-
-The policy $\pi_\theta(y_t | x, y_{<t})$ is the language model's next-token distribution.
-
-Our objective is to maximize expected reward:
-\begin{equation}
-J(\theta) = \mathbb{E}_{x \sim \mathcal{D}} \mathbb{E}_{y \sim \pi_\theta(\cdot | x)} [r_\phi(x, y)]
-\end{equation}
-
-However, \textbf{blindly optimizing this objective leads to disaster}.
-
-\subsubsection{The Reward Hacking Problem}
-
-Imagine you train a model to maximize "helpfulness" scores. Without constraints, the model might:
-\begin{itemize}
-\item Generate extremely verbose responses (more text = more chances to be helpful?)
-\item Repeat information excessively
-\item Use patterns that exploit reward model biases
-\item Drift into nonsensical but high-scoring text
-\end{itemize}
-
-This is \textbf{reward hacking} or \textbf{specification gaming}: the model exploits imperfections in the reward model rather than improving genuine quality.
-
-\textbf{Analogy:} You train a robot to clean a room, rewarding it based on how much dirt it collects. The robot learns to dump dirt on the floor, then collect it---maximizing reward without achieving the real goal. The reward model (dirt collected) doesn't perfectly capture your true objective (have a clean room).
-
-In language models, reward hacking manifests as:
-\begin{itemize}
-\item \textbf{Mode collapse:} Generating very similar high-reward responses to every prompt
-\item \textbf{Reward exploitation:} Finding adversarial examples that score high but are actually poor
-\item \textbf{Coherence degradation:} Breaking from natural language patterns in ways the reward model doesn't penalize
-\end{itemize}
-
-\subsubsection{The KL Divergence Constraint}
-
-The solution is to constrain how much the policy can change during RL training. We add a \textbf{KL divergence penalty} that prevents the policy from drifting too far from the SFT initialization:
+The policy $\pi_\theta(y_t \mid x, y_{<t})$ is the language model's
+next-token distribution. The objective is to maximize expected reward:
 
 \begin{equation}
-J_{\text{RLHF}}(\theta) = \mathbb{E}_{x \sim \mathcal{D}} \mathbb{E}_{y \sim \pi_\theta(\cdot | x)} [r_\phi(x, y)] - \beta \cdot \mathbb{D}_{\text{KL}}[\pi_\theta(\cdot|x) \| \pi^{\text{SFT}}(\cdot|x)]
+\label{eq:rlhf_naive}
+J(\theta) = \mathbb{E}_{x \sim \mathcal{D}}\,
+    \mathbb{E}_{y \sim \pi_\theta(\cdot \mid x)}
+    [r_\phi(x, y)]
 \end{equation}
 
-Let's unpack each component:
+Blindly optimizing this objective leads to a failure mode known as
+\emph{reward hacking}: the policy learns to exploit imperfections in the
+reward model rather than improving genuine quality. Without constraints,
+the policy might generate verbose responses (more text provides more
+surface for reward model exploitation), repetitive patterns that score
+high on the reward model but are unhelpful in practice, or text that has
+drifted so far from natural language that it is incoherent yet achieves
+high reward model scores.
 
-\textbf{Reward term:} $\mathbb{E}[r_\phi(x, y)]$ encourages high reward under the learned reward model.
+The deeper principle at work is Goodhart's Law: when a measure becomes
+a target, it ceases to be a good measure. The reward model is an
+imperfect proxy for true human preferences, trained on a finite dataset
+from $\pi^{\text{SFT}}$. As the policy moves away from that distribution,
+the reward model's predictions become increasingly unreliable. Optimizing
+the proxy too aggressively destroys the very quality it was meant to
+capture.
 
-\textbf{KL penalty:} The Kullback-Leibler divergence measures how different $\pi_\theta$ is from $\pi^{\text{SFT}}$:
+\subsubsection{The KL-Constrained Objective}
+\label{sec:kl_constraint}
+
+The solution is to add a KL divergence penalty that prevents the policy
+from drifting too far from the SFT reference:
+
 \begin{equation}
-\mathbb{D}_{\text{KL}}[\pi_\theta \| \pi^{\text{SFT}}] = \mathbb{E}_{y \sim \pi_\theta} \left[ \log \frac{\pi_\theta(y|x)}{\pi^{\text{SFT}}(y|x)} \right]
+\label{eq:rlhf_objective}
+J_{\text{RLHF}}(\theta)
+= \mathbb{E}_{x \sim \mathcal{D}}\,
+    \mathbb{E}_{y \sim \pi_\theta(\cdot \mid x)}
+    [r_\phi(x, y)]
+    - \beta \cdot \mathbb{D}_{\text{KL}}
+    [\pi_\theta(\cdot \mid x) \,\|\, \pi^{\text{SFT}}(\cdot \mid x)]
 \end{equation}
 
-This can be computed token-by-token:
+The KL divergence measures how different the current policy is from the
+reference:
+
 \begin{equation}
-\mathbb{D}_{\text{KL}}[\pi_\theta \| \pi^{\text{SFT}}] = \sum_{t=1}^{T} \mathbb{E}_{y_t \sim \pi_\theta} \left[ \log \frac{\pi_\theta(y_t|x, y_{<t})}{\pi^{\text{SFT}}(y_t|x, y_{<t})} \right]
+\label{eq:kl_divergence}
+\mathbb{D}_{\text{KL}}[\pi_\theta \,\|\, \pi^{\text{SFT}}]
+= \mathbb{E}_{y \sim \pi_\theta}
+    \left[ \log \frac{\pi_\theta(y \mid x)}{\pi^{\text{SFT}}(y \mid x)} \right]
 \end{equation}
 
-\textbf{Coefficient $\beta$:} Controls the strength of the constraint (typically $\beta \in [0.01, 0.1]$). Higher $\beta$ keeps the policy closer to SFT but limits reward improvement. Lower $\beta$ allows more optimization but risks reward hacking.
+which decomposes token-by-token as:
 
-\subsubsection{Why KL Divergence?}
+\begin{equation}
+\label{eq:kl_tokenwise}
+\mathbb{D}_{\text{KL}}[\pi_\theta \,\|\, \pi^{\text{SFT}}]
+= \sum_{t=0}^{T-1} \mathbb{E}_{y_t \sim \pi_\theta}
+    \left[ \log \frac{\pi_\theta(y_t \mid x, y_{<t})}
+                     {\pi^{\text{SFT}}(y_t \mid x, y_{<t})} \right]
+\end{equation}
 
-The KL penalty serves multiple purposes:
+The coefficient $\beta$ controls the strength of the constraint, typically
+in the range $[0.01, 0.1]$. A larger $\beta$ keeps the policy closer to
+$\pi^{\text{SFT}}$, limiting reward improvement but preventing hacking. A
+smaller $\beta$ allows more aggressive optimization but increases the risk
+of reward exploitation.
 
-\textbf{Maintaining fluency:} $\pi^{\text{SFT}}$ was trained on high-quality text and generates coherent language. Staying close to $\pi^{\text{SFT}}$ ensures $\pi_\theta$ remains fluent.
+The KL penalty serves three purposes simultaneously. It maintains fluency:
+$\pi^{\text{SFT}}$ generates coherent language, and staying close to it
+ensures the optimized policy remains readable. It defines a trust region
+within which the reward model is well-calibrated: the reward model was
+trained on samples from $\pi^{\text{SFT}}$, so its predictions are most
+reliable near that distribution. And it prevents mode collapse: without
+the penalty, the policy might converge to generating a small set of
+high-scoring responses to every prompt, losing the diversity needed for
+a general-purpose assistant.
 
-\textbf{Trust region:} KL divergence defines a "trust region" around $\pi^{\text{SFT}}$ where the reward model is well-calibrated. The reward model was trained on samples from $\pi^{\text{SFT}}$---its predictions become less reliable far from this distribution.
+There is also a deeper justification. The KL-constrained objective has
+a closed-form optimal solution:
 
-\textbf{Preventing collapse:} Without the penalty, the policy might collapse to generating a small set of high-reward responses repeatedly.
+\begin{equation}
+\label{eq:kl_optimal}
+\pi^*(y \mid x)
+= \frac{1}{Z(x)}\, \pi^{\text{SFT}}(y \mid x)
+    \exp\!\left(\frac{1}{\beta} r(x, y)\right)
+\end{equation}
 
-\textbf{Computational efficiency:} The KL penalty can be computed efficiently during generation without additional forward passes.
+where $Z(x) = \sum_y \pi^{\text{SFT}}(y \mid x) \exp(r(x,y)/\beta)$ is
+the partition function. This can be derived by treating the optimization
+as finding the distribution $\pi_\theta$ that maximizes expected reward
+subject to a KL constraint, using Lagrange multipliers. The optimal policy
+is a tilted version of the reference policy, with responses upweighted
+exponentially by their reward. This closed form motivates the DPO approach
+discussed in Section~\ref{sec:dpo}.
 
-\textbf{Mathematical insight:} The KL-constrained objective can be derived from a Bayesian perspective where $\pi^{\text{SFT}}$ represents our prior belief about good responses, and we're performing approximate Bayesian inference with the reward model as the likelihood.
+\section{Proximal Policy Optimization for RLHF}
+\label{sec:ppo_rlhf}
 
-\section{Proximal Policy Optimization (PPO)}
-
-While policy gradient methods like REINFORCE could optimize the RLHF objective, they suffer from high variance and instability---particularly problematic when each "episode" is generating a potentially long text sequence.
-
-\textbf{Proximal Policy Optimization (PPO)} \cite{schulman2017} addresses these challenges and has become the standard algorithm for RLHF. PPO's key innovation: \textbf{preventing destructively large policy updates} through a clipped objective.
+Policy gradient methods like REINFORCE could in principle optimize the
+RLHF objective, but they suffer from high variance and instability that
+is particularly severe when each episode is a full text generation. PPO
+addresses both problems~\cite{schulman2017} and has become the standard
+algorithm for Stage 3 of RLHF.
 
 \subsection{The Policy Ratio}
+\label{sec:policy_ratio}
 
-PPO operates by collecting experience with the current policy $\pi_{\theta_{\text{old}}}$, then updating to a new policy $\pi_\theta$. Define the \textbf{probability ratio}:
+PPO operates by collecting experience under the current policy
+$\pi_{\theta_{\text{old}}}$, then updating to a new policy $\pi_\theta$.
+Define the \textbf{probability ratio}:
 
 \begin{equation}
-r_t(\theta) = \frac{\pi_\theta(a_t | s_t)}{\pi_{\theta_{\text{old}}}(a_t | s_t)}
+\label{eq:policy_ratio}
+\rho_t(\theta)
+= \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\text{old}}}(a_t \mid s_t)}
 \end{equation}
 
-This ratio measures how much more or less likely the new policy is to take action $a_t$ compared to the old policy:
-\begin{itemize}
-\item $r_t > 1$: New policy favors this action more than old policy
-\item $r_t = 1$: No change in action probability
-\item $r_t < 1$: New policy favors this action less
-\end{itemize}
+This ratio measures how much more or less likely the new policy is to take
+action $a_t$ relative to the old policy. A ratio greater than 1 means the
+new policy favors this action more; less than 1 means it favors it less;
+equal to 1 means no change.
+
+The standard policy gradient objective would be $\mathcal{L}^{\text{PG}}
+(\theta) = \mathbb{E}_t[\rho_t(\theta) A_t]$, where $A_t$ is the advantage
+from Chapter~\ref{ch:rl}. However, nothing in this objective prevents
+$\rho_t$ from becoming arbitrarily large, and large updates can
+catastrophically destabilize the policy.
 
 \subsection{The Clipped Objective}
+\label{sec:clipped_objective}
 
-Standard policy gradient would update using $\mathcal{L}^{\text{PG}}(\theta) = \mathbb{E}_t [r_t(\theta) A_t]$. However, nothing prevents $r_t$ from becoming arbitrarily large, leading to destructive updates. PPO clips the ratio using the following lower-bound objective:
-
-\begin{equation}
-\mathcal{L}^{\text{CLIP}}(\theta) = \mathbb{E}_t \left[ \min(r_t(\theta) A_t, \text{clip}(r_t(\theta), 1-\epsilon, 1+\epsilon) A_t) \right]
-\end{equation}
-
-where $\epsilon$ is a hyperparameter (typically 0.2). The $\min$ operator creates a \textbf{pessimistic bound}: it ignores changes in probability that improve the objective beyond the clip threshold $\epsilon$, but fully penalizes changes that make the objective worse.
-
-\subsection{Visualizing the Clipping Logic}
-
-To understand the mechanism, we must look at cases where the advantage $A_t$ is positive (good action) versus negative (bad action).
-
-\subsubsection*{Case 1: Positive Advantage ($A_t > 0$)}
-The action was better than expected. We want to \textbf{increase} its probability ($r_t > 1$), but not too much to avoid instability.
-
-\textbf{Example:} Let $A_t = 1.0$ and $\epsilon = 0.2$. The clip range is $[0.8, 1.2]$.
-
-\begin{center}
-\begin{tabular}{|l|c|c|l|}
-\hline
-\textbf{Scenario} & \textbf{$r_t$ range} & \textbf{Objective Value} & \textbf{Outcome} \\
-\hline
-Policy decreases prob & $r_t < 0.8$ & $r_t A_t$ & \textbf{Standard Update} (Push prob back up) \\
-\hline
-Policy increases modest & $0.8 \le r_t \le 1.2$ & $r_t A_t$ & \textbf{Standard Update} \\
-\hline
-Policy increases huge & $r_t > 1.2$ & $1.2 A_t$ & \textbf{Clipped} (Update is capped) \\
-\hline
-\end{tabular}
-\end{center}
-
-\subsubsection*{Case 2: Negative Advantage ($A_t < 0$)}
-The action was worse than expected. We want to \textbf{decrease} its probability ($r_t < 1$), but not too drastically.
-
-\textbf{Example:} Let $A_t = -1.0$ and $\epsilon = 0.2$. Since $A_t$ is negative, the "min" operator selects the more negative (pessimistic) value.
-
-\begin{center}
-\begin{tabular}{|l|c|c|l|}
-\hline
-\textbf{Scenario} & \textbf{$r_t$ range} & \textbf{Objective Value} & \textbf{Outcome} \\
-\hline
-Policy decreases huge & $r_t < 0.8$ & $0.8 A_t$ & \textbf{Clipped} (Prevent prob collapse) \\
-\hline
-Policy decreases modest & $0.8 \le r_t \le 1.2$ & $r_t A_t$ & \textbf{Standard Update} \\
-\hline
-Policy increases prob & $r_t > 1.2$ & $r_t A_t$ & \textbf{Standard Update} (Full penalty applied) \\
-\hline
-\end{tabular}
-\end{center}
-
-In summary: PPO limits the incentive to change the policy in the \textit{beneficial} direction, but retains the full penalty if the policy moves in the \textit{detrimental} direction.
-
-\subsection{Advantages: Measuring "How Good Was This Action?"}
-
-The advantage function $A_t$ quantifies whether an action was better or worse than expected. Recall from Section~\ref{sec:actor-critic-architecture}, the Advantage Function is given by:
+PPO constrains the update by clipping the probability ratio, producing a
+conservative lower bound on the true objective:
 
 \begin{equation}
-A^\pi(s_t, a_t) = Q^\pi(s_t, a_t) - V^\pi(s_t)
+\label{eq:ppo_clip}
+\mathcal{L}^{\text{CLIP}}(\theta)
+= \mathbb{E}_t\!\left[
+    \min\!\left(
+        \rho_t(\theta)\, A_t,\;
+        \mathrm{clip}(\rho_t(\theta), 1-\epsilon, 1+\epsilon)\, A_t
+    \right)
+\right]
 \end{equation}
 
-where:
-\begin{itemize}
-\item $Q^\pi(s_t, a_t)$: Expected return if we take action $a_t$ in state $s_t$, then follow policy $\pi$
-\item $V^\pi(s_t)$: Expected return if we follow policy $\pi$ from state $s_t$
-\item $A^\pi(s_t, a_t)$: How much better is $a_t$ compared to the average action?
-\end{itemize}
+where $\epsilon$ is a hyperparameter typically set to 0.2. The $\min$
+operator creates a pessimistic bound: it ignores probability changes that
+improve the objective beyond the clip threshold, but retains the full
+penalty for changes that make the objective worse. To understand why,
+consider the two cases separately.
+
+\textbf{Positive advantage ($A_t > 0$).} The action was better than
+expected; we want to increase its probability. The unclipped term
+$\rho_t A_t$ grows without bound as $\rho_t$ increases. The clipped term
+caps the benefit at $\rho_t = 1 + \epsilon$, so once the policy has moved
+enough to make this action substantially more likely, additional increases
+provide no gradient signal. The $\min$ takes the unclipped term when
+$\rho_t$ is small (the policy has not yet moved much, and we still want to
+push it) and the clipped term when $\rho_t > 1 + \epsilon$ (the policy
+has moved enough). Table~\ref{tab:ppo_positive} summarizes the behavior
+for $A_t = 1.0$ and $\epsilon = 0.2$.
+
+\begin{table}[htbp]
+\centering
+\caption{PPO clipping behavior with positive advantage ($A_t = 1.0$,
+    $\epsilon = 0.2$, clip range $[0.8, 1.2]$).}
+\label{tab:ppo_positive}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{lcl}
+\hline
+\textbf{Scenario} & \textbf{Objective value} & \textbf{Effect} \\
+\hline
+$\rho_t < 0.8$ (prob decreased)         & $\rho_t A_t$   & full gradient, push back up \\
+$0.8 \le \rho_t \le 1.2$ (modest change)& $\rho_t A_t$   & standard update \\
+$\rho_t > 1.2$ (large increase)          & $1.2\, A_t$    & clipped, no further incentive \\
+\hline
+\end{tabular}
+\end{table}
+
+\textbf{Negative advantage ($A_t < 0$).} The action was worse than
+expected; we want to decrease its probability. Here the $\min$ retains the
+full penalty when $\rho_t > 1 + \epsilon$ (the policy is incorrectly
+increasing probability of a bad action) and clips when $\rho_t <
+1 - \epsilon$ (the policy has already decreased the probability enough).
+Table~\ref{tab:ppo_negative} summarizes the behavior for $A_t = -1.0$.
+
+\begin{table}[htbp]
+\centering
+\caption{PPO clipping behavior with negative advantage ($A_t = -1.0$,
+    $\epsilon = 0.2$, clip range $[0.8, 1.2]$).}
+\label{tab:ppo_negative}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{lcl}
+\hline
+\textbf{Scenario} & \textbf{Objective value} & \textbf{Effect} \\
+\hline
+$\rho_t < 0.8$ (large decrease)          & $0.8\, A_t$    & clipped, prevent collapse \\
+$0.8 \le \rho_t \le 1.2$ (modest change) & $\rho_t A_t$   & standard update \\
+$\rho_t > 1.2$ (prob increased)          & $\rho_t A_t$   & full penalty retained \\
+\hline
+\end{tabular}
+\end{table}
+
+In summary: PPO limits the incentive to change the policy in the
+beneficial direction beyond a threshold, but retains the full penalty
+when the policy moves in the detrimental direction. This asymmetry is
+what makes the objective a conservative lower bound.
+
+\subsection{The Complete PPO-RLHF Algorithm}
+\label{sec:ppo_algorithm}
+
+The RLHF training loop requires four models simultaneously: the policy
+$\pi_\theta$ being trained, the frozen reference policy $\pi^{\text{SFT}}$
+for the KL penalty, the reward model $r_\phi$ for computing episode
+rewards, and a value network $V_\psi$ for computing advantages. The memory
+and parallelism techniques required to serve these models simultaneously
+are those developed in Chapters~\ref{ch:pretraining} and~\ref{ch:inference};
+the reward model and reference policy require only inference, while the
+policy and value network require gradient computation.
+
+Algorithm~\ref{alg:ppo_rlhf} presents the complete procedure including
+GAE advantage estimation from Chapter~\ref{ch:rl}.
 
 \begin{algorithm}[H]
-\caption{PPO-RLHF: Complete Algorithm with GAE Implementation}
-\label{alg:ppo_rlhf_gae_complete}
+\caption{PPO-RLHF with GAE}
+\label{alg:ppo_rlhf}
 \begin{algorithmic}[1]
-\Require SFT Model $\pi^{\text{SFT}}$, Reward Model $r_\phi$, Dataset $\mathcal{D}$
-\State \textbf{Hyperparameters:} 
-\State \quad $\epsilon=0.2$ (clip), $\beta=0.02$ (KL coef), $K=4$ (epochs)
-\State \quad $\gamma=1.0$ (discount factor), $\lambda=0.95$ (GAE smoothing)
+\Require SFT model $\pi^{\text{SFT}}$, reward model $r_\phi$,
+    prompt dataset $\mathcal{D}$
+\Require $\epsilon = 0.2$ (clip), $\beta = 0.02$ (KL coefficient),
+    $K = 4$ (update epochs), $\gamma = 1.0$, $\lambda = 0.95$ (GAE)
+\State Initialize $\pi_\theta \leftarrow \pi^{\text{SFT}}$,
+    $\pi_{\text{ref}} \leftarrow \pi^{\text{SFT}}$ (frozen),
+    value network $V_\psi$
 
-\State \textbf{Initialize:}
-\State \quad Policy $\pi_\theta \leftarrow \pi^{\text{SFT}}$
-\State \quad Reference Policy $\pi_{\text{ref}} \leftarrow \pi^{\text{SFT}}$ \Comment{Frozen, never updated}
-\State \quad Value Network $V_\psi$
-
-\Repeat \Comment{Main Training Loop}
-    \State \textbf{Phase 1: Experience Collection}
-    \State Snapshot policy: $\pi_{\theta_{\text{old}}} \leftarrow \pi_\theta$
+\Repeat
+    \State \textbf{Phase 1 --- Experience collection}
+    \State $\pi_{\theta_{\text{old}}} \leftarrow \pi_\theta$
     \State Sample prompts $\{x_1, \ldots, x_B\} \sim \mathcal{D}$
-    
     \For{each prompt $x_i$}
-        \State Generate sequence $y_i = (y_{i,1}, \ldots, y_{i,T})$ using $\pi_{\theta_{\text{old}}}$
-        \State Compute scalar outcome: $R_{\text{score}} \leftarrow r_\phi(x_i, y_i)$
-        
-        \State \Comment{1. Compute Dense Rewards}
-        \For{each timestep $t = 1 \ldots T$}
-            \State Compute probs: $p_t \leftarrow \pi_{\theta_{\text{old}}}(y_{i,t}|x_i, y_{i,<t})$
-            \State Compute ref: $p_t^{\text{ref}} \leftarrow \pi_{\text{ref}}(y_{i,t}|x_i, y_{i,<t})$
-            \State Store log-prob: $\text{lp}_{i,t}^{\text{old}} \leftarrow \log(p_t)$
-            \State Dense Reward with approximate KL: $r_{i,t} \leftarrow -\beta \cdot \log(p_t / p_t^{\text{ref}})$ 
+        \State Generate response $y_i = (y_{i,0}, \ldots, y_{i,T-1})$
+            using $\pi_{\theta_{\text{old}}}$
+        \State Compute terminal reward: $R_i \leftarrow r_\phi(x_i, y_i)$
+        \For{$t = 0$ to $T-1$}
+            \State $p_t \leftarrow \pi_{\theta_{\text{old}}}(y_{i,t}
+                \mid x_i, y_{i,<t})$;\quad
+                $p_t^{\text{ref}} \leftarrow \pi_{\text{ref}}(y_{i,t}
+                \mid x_i, y_{i,<t})$
+            \State Store $\mathrm{lp}_{i,t}^{\text{old}} \leftarrow \log p_t$
+            \State $\hat{r}_{i,t} \leftarrow
+                -\beta \log(p_t / p_t^{\text{ref}})$
+                \Comment{per-token KL penalty}
         \EndFor
-        \State $r_{i,T} \leftarrow r_{i,T} + R_{\text{score}}$ \Comment{Add score to last token}
-        
-        \State \Comment{2. Compute Values (Forward Pass)}
-        \For{$t = 1 \ldots T$}
-             \State $v_{i,t} \leftarrow V_\psi(x_i, y_{i, <t})$
+        \State $\hat{r}_{i,T-1} \leftarrow \hat{r}_{i,T-1} + R_i$
+            \Comment{add terminal reward to last token}
+        \For{$t = 0$ to $T-1$}
+            \State $v_{i,t} \leftarrow V_\psi(x_i, y_{i,<t})$
         \EndFor
-        \State $v_{i, T+1} \leftarrow 0$ \Comment{Terminal value is 0}
+        \State $v_{i,T} \leftarrow 0$ \Comment{terminal value}
     \EndFor
-    
-    \State \textbf{Phase 2: Generalized Advantage Estimation (GAE)}
-    \For{each prompt $x_i$}
-        \State Initialize $\text{last\_gae} \leftarrow 0$
-        \State \Comment{Loop Backwards from T down to 1}
-        \For{$t = T \textbf{ down to } 1$}
-            \State $\delta_t \leftarrow r_{i,t} + \gamma v_{i, t+1} - v_{i,t}$ \Comment{TD Error}
-            \State $\hat{A}_{i,t} \leftarrow \delta_t + (\gamma \lambda) \cdot \text{last\_gae}$
-            \State $\text{last\_gae} \leftarrow \hat{A}_{i,t}$
-            \State $\hat{R}_{i,t} \leftarrow \hat{A}_{i,t} + v_{i,t}$ \Comment{Target for Value Net}
-        \EndFor
-    \EndFor
-    
-    \State \Comment{Normalize Advantages across whole batch}
-    \State $\hat{A} \leftarrow \frac{\hat{A} - \text{mean}(\hat{A})}{\text{std}(\hat{A}) + 10^{-8}}$
 
-    \State \textbf{Phase 3: Policy and Value Updates}
+    \State \textbf{Phase 2 --- GAE advantage estimation}
+    \For{each prompt $x_i$}
+        \State $g \leftarrow 0$
+        \For{$t = T-1$ \textbf{down to} $0$}
+            \State $\delta_t \leftarrow
+                \hat{r}_{i,t} + \gamma v_{i,t+1} - v_{i,t}$
+                \Comment{TD error}
+            \State $\hat{A}_{i,t} \leftarrow \delta_t + \gamma\lambda\, g$;\quad
+                $g \leftarrow \hat{A}_{i,t}$
+            \State $\hat{R}_{i,t} \leftarrow \hat{A}_{i,t} + v_{i,t}$
+                \Comment{value target}
+        \EndFor
+    \EndFor
+    \State Normalize: $\hat{A} \leftarrow
+        (\hat{A} - \mathrm{mean}(\hat{A})) /
+        (\mathrm{std}(\hat{A}) + 10^{-8})$
+
+    \State \textbf{Phase 3 --- Policy and value updates}
     \For{epoch $k = 1$ to $K$}
-        \For{each mini-batch of timesteps $(x, y_{<t}, y_t, \hat{A}_t, \hat{R}_t, \text{lp}^{\text{old}}_t)$}
-            \State New log-prob: $\text{lp}_t \leftarrow \log \pi_\theta(y_t|x, y_{<t})$
-            \State Ratio: $r_t(\theta) \leftarrow \exp(\text{lp}_t - \text{lp}^{\text{old}}_t)$
-            \State $\mathcal{L}^{\text{CLIP}} \leftarrow \mathbb{E}[-\min(r_t \hat{A}_t, \text{clip}(r_t, 1-\epsilon, 1+\epsilon) \hat{A}_t)]$
-            \State $\mathcal{L}^{\text{V}} \leftarrow \mathbb{E}[(V_\psi(x, y_{<t}) - \hat{R}_t)^2]$
-            \State $\mathcal{L} \leftarrow \mathcal{L}^{\text{CLIP}} + c_1 \mathcal{L}^{\text{V}}$
-            \State Update $\theta, \psi$ via gradient descent on $\mathcal{L}$
+        \For{each mini-batch
+            $(x, y_{<t}, y_t, \hat{A}_t, \hat{R}_t,
+            \mathrm{lp}^{\text{old}}_t)$}
+            \State $\mathrm{lp}_t \leftarrow
+                \log \pi_\theta(y_t \mid x, y_{<t})$
+            \State $\rho_t(\theta) \leftarrow
+                \exp(\mathrm{lp}_t - \mathrm{lp}^{\text{old}}_t)$
+            \State $\mathcal{L}^{\text{CLIP}} \leftarrow
+                \mathbb{E}\bigl[-\min(\rho_t \hat{A}_t,\,
+                \mathrm{clip}(\rho_t, 1{-}\epsilon, 1{+}\epsilon)
+                \hat{A}_t)\bigr]$
+            \State $\mathcal{L}^{V} \leftarrow
+                \mathbb{E}\bigl[(V_\psi(x, y_{<t}) - \hat{R}_t)^2\bigr]$
+            \State Update $\theta, \psi$ via gradient descent on
+                $\mathcal{L}^{\text{CLIP}} + c_1 \mathcal{L}^{V}$
         \EndFor
     \EndFor
 \Until{converged}
 \end{algorithmic}
 \end{algorithm}
 
-\subsection{Computational Challenges}
+\section{Extensions and Alternatives}
+\label{sec:rlhf_extensions}
 
-RLHF training is computationally expensive, requiring careful engineering to make tractable \cite{rajbhandari2020zero, zhao2023pytorch}.
+\subsection{Direct Preference Optimization}
+\label{sec:dpo}
 
-\subsubsection{The Four-Model Problem}
+The three-stage RLHF pipeline is effective but complex: it requires
+training a reward model, running a computationally expensive RL loop, and
+managing four large models simultaneously. Direct Preference Optimization
+(DPO)~\cite{rafailov2023} eliminates the reward model and RL loop entirely,
+optimizing the policy directly from preference data.
 
-During PPO training, we need four large models simultaneously:
+\subsubsection{Derivation from the KL-Constrained Optimum}
+\label{sec:dpo_derivation}
 
-\begin{enumerate}
-\item \textbf{Policy model} $\pi_\theta$: Being trained (requires gradients)
-\item \textbf{Reference model} $\pi^{\text{SFT}}$: For KL penalty (inference only)
-\item \textbf{Reward model} $r_\phi$: For computing rewards (inference only)
-\item \textbf{Value model} $V_\psi$: For computing advantages (requires gradients)
-\end{enumerate}
+DPO begins from the closed-form optimal solution to the KL-constrained
+objective, Equation~\ref{eq:kl_optimal}:
 
-For a 7B parameter model in FP16:
-\begin{itemize}
-\item Each model: $\sim$14 GB of memory
-\item Total: $\sim$56 GB just for model weights
-\item Add activations, optimizer states: 100+ GB total
-\end{itemize}
-
-\textbf{Solutions}:
-
-\textbf{Model parallelism:} Distribute models across multiple GPUs \cite{rajbhandari2020zero}.
-\begin{itemize}
-\item Policy and value on GPUs 0-3
-\item Reference and reward on GPUs 4-7
-\end{itemize}
-
-\textbf{Quantization:} Use INT8 or INT4 for inference-only models (reference, reward)
-\begin{itemize}
-\item Reduces memory by 2-4$\times$
-\item Minimal impact on inference quality
-\end{itemize}
-
-\textbf{LoRA (Low-Rank Adaptation) \cite{hu2021lora}:} Instead of fine-tuning all parameters, train low-rank adapters:
 \begin{equation}
-W_{\text{new}} = W_{\text{frozen}} + \Delta W = W_{\text{frozen}} + BA
-\end{equation}
-where $B \in \mathbb{R}^{d \times r}$, $A \in \mathbb{R}^{r \times d}$, and $r \ll d$ (typically $r=8$ to $r=64$).
-
-LoRA reduces trainable parameters by 100-1000$\times$, making RLHF tractable on consumer GPUs.
-
-\textbf{Shared value head:} Initialize $V_\psi$ from $\pi_\theta$, sharing most parameters. Only the final value projection head differs.
-
-\subsubsection{Batch Size and Experience}
-
-PPO requires collecting batches of experience (multiple complete generations) before updating. For RLHF:
-
-\textbf{Generation batch size:} 64-512 prompts per iteration
-\begin{itemize}
-\item Larger batches $\rightarrow$ more stable gradients
-\item But: longer time between policy updates
-\item Memory constraints limit batch size
-\end{itemize}
-
-\textbf{Sequence length:} Generated responses are variable length (50-1000+ tokens)
-\begin{itemize}
-\item Pad to maximum length for batching
-\item Wastes computation on padding tokens
-\item Use dynamic batching when possible \cite{dao2022flashattention}
-\end{itemize}
-
-\textbf{Experience replay:} PPO reuses collected experience for $K=4$ epochs
-\begin{itemize}
-\item Improves sample efficiency
-\item But: old experience becomes stale as policy updates
-\item Must balance reuse with staleness
-\end{itemize}
-
-\subsubsection{Training Stability}
-
-RLHF training can be unstable:
-
-\textbf{Reward hacking:} Policy exploits reward model imperfections
-\begin{itemize}
-\item Monitor reward vs. KL divergence
-\item Halt if KL exceeds thresholds
-\item Implement early stopping
-\end{itemize}
-
-\textbf{Value function collapse:} $V_\psi$ fails to predict returns accurately
-\begin{itemize}
-\item Use separate optimizer for value head
-\item Clip value updates
-\item Monitor value loss
-\end{itemize}
-
-\textbf{Policy collapse:} Model generates repetitive or degenerate text
-\begin{itemize}
-\item Increase KL penalty $\beta$
-\item Add entropy regularization
-\item Use temperature sampling ($T > 1$)
-\end{itemize}
-
-\textbf{Typical training curve}:
-\begin{itemize}
-\item Iterations 0-100: Rapid reward increase, moderate KL growth
-\item Iterations 100-500: Slower reward gains, KL stabilizes
-\item Iterations 500+: Diminishing returns, potential overfitting
-\end{itemize}
-
-Monitor these metrics closely and adjust hyperparameters dynamically.
-
-\section{Advanced Topics and Extensions}
-
-\subsection{Direct Preference Optimization (DPO)}
-
-Recent research has shown we can bypass the reward model entirely, simplifying the RLHF pipeline \cite{rafailov2023}.
-
-\subsubsection{The Key Insight}
-
-Recall the KL-constrained RL objective:
-\begin{equation}
-\max_\theta \mathbb{E}_{x,y} [r(x,y)] - \beta \mathbb{D}_{\text{KL}}[\pi_\theta \| \pi_{\text{ref}}]
+\pi^*(y \mid x)
+= \frac{1}{Z(x)}\, \pi_{\text{ref}}(y \mid x)
+    \exp\!\left(\frac{1}{\beta} r(x, y)\right)
 \end{equation}
 
-This has a closed-form optimal solution:
-\begin{equation}
-\pi^*(y|x) = \frac{1}{Z(x)} \pi_{\text{ref}}(y|x) \exp\left(\frac{1}{\beta} r(x,y)\right)
-\end{equation}
+Rearranging to express the reward in terms of the optimal policy:
 
-where $Z(x) = \sum_y \pi_{\text{ref}}(y|x) \exp\left(\frac{1}{\beta} r(x,y)\right)$ is the partition function.
-
-Rearranging to solve for the reward:
-\begin{equation}
-r(x,y) = \beta \log \frac{\pi^*(y|x)}{\pi_{\text{ref}}(y|x)} + \beta \log Z(x)
-\end{equation}
-
-\subsubsection{The DPO Objective}
-
-Substituting this into the Bradley-Terry model:
 \begin{align}
-P(y_w \succ y_l | x) &= \sigma(r(x,y_w) - r(x,y_l)) \nonumber \\
-&= \sigma\left(\beta \log \frac{\pi^*(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi^*(y_l|x)}{\pi_{\text{ref}}(y_l|x)}\right)
+\pi^*(y \mid x) \cdot Z(x)
+    &= \pi_{\text{ref}}(y \mid x)
+        \exp\!\left(\frac{r(x,y)}{\beta}\right) \notag \\
+\frac{\pi^*(y \mid x)}{\pi_{\text{ref}}(y \mid x)}
+    &= \frac{1}{Z(x)} \exp\!\left(\frac{r(x,y)}{\beta}\right) \notag \\
+\log \frac{\pi^*(y \mid x)}{\pi_{\text{ref}}(y \mid x)}
+    &= \frac{r(x,y)}{\beta} - \log Z(x) \notag \\
+r(x, y)
+    &= \beta \log \frac{\pi^*(y \mid x)}{\pi_{\text{ref}}(y \mid x)}
+        + \beta \log Z(x)
+\label{eq:reward_from_policy}
 \end{align}
 
-The partition function $Z(x)$ cancels! This gives us the \textbf{DPO loss} \cite{rafailov2023}:
+Now substitute this expression for $r(x, y)$ into the Bradley-Terry
+preference model, Equation~\ref{eq:bradley_terry_sigmoid}:
+
+\begin{align}
+P(y_w \succ y_l \mid x)
+&= \sigma(r(x, y_w) - r(x, y_l)) \notag \\
+&= \sigma\!\left(
+    \beta \log \frac{\pi^*(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)}
+    + \beta \log Z(x)
+    - \beta \log \frac{\pi^*(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)}
+    - \beta \log Z(x)
+\right) \notag \\
+&= \sigma\!\left(
+    \beta \log \frac{\pi^*(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)}
+    - \beta \log \frac{\pi^*(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)}
+\right)
+\label{eq:dpo_preference}
+\end{align}
+
+The partition function $Z(x)$ cancels exactly. This is the key step: the
+preference probability can be expressed directly in terms of the policy
+ratio $\pi^* / \pi_{\text{ref}}$ without ever needing to compute $Z(x)$,
+which is intractable in general. Replacing $\pi^*$ with the parameterized
+policy $\pi_\theta$ gives the DPO loss:
 
 \begin{equation}
-\mathcal{L}_{\text{DPO}}(\theta) = -\mathbb{E}_{(x,y_w,y_l)} \left[ \log \sigma \left( \beta \log \frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta \log \frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \right) \right]
+\label{eq:dpo_loss}
+\mathcal{L}_{\text{DPO}}(\theta)
+= -\mathbb{E}_{(x, y_w, y_l) \sim \mathcal{D}_{\text{pref}}}
+    \left[
+    \log \sigma\!\left(
+        \beta \log \frac{\pi_\theta(y_w \mid x)}
+                        {\pi_{\text{ref}}(y_w \mid x)}
+        - \beta \log \frac{\pi_\theta(y_l \mid x)}
+                          {\pi_{\text{ref}}(y_l \mid x)}
+    \right)
+    \right]
 \end{equation}
 
-\subsubsection{Algorithm Implementation}
+This is a supervised learning objective: given a preference triple
+$(x, y_w, y_l)$, compute the log-probability of both responses under both
+$\pi_\theta$ and $\pi_{\text{ref}}$, form the log-ratio differences, and
+maximize the probability of the observed preference. No reward model, no
+RL loop, no four-model training setup.
 
-The practical implementation involves computing the log-likelihood ratios for chosen and rejected responses under both the policy and reference models.
+\subsubsection{DPO Algorithm and Properties}
+\label{sec:dpo_algorithm}
 
 \begin{algorithm}[H]
 \caption{Direct Preference Optimization (DPO)}
 \label{alg:dpo}
 \begin{algorithmic}[1]
-\Require Dataset $\mathcal{D} = \{(x^{(i)}, y_w^{(i)}, y_l^{(i)})\}_{i=1}^N$ (Prompts, Winner, Loser)
-\Require Reference Model $\pi_{\text{ref}}$ (Frozen)
-\Require Policy Model $\pi_{\theta}$ (Initialized from $\pi_{\text{ref}}$)
-\State \textbf{Hyperparameters:} $\beta \leftarrow 0.1$, $\eta \leftarrow 5\text{e-}7$ (Learning Rate), $B \leftarrow 64$ (Batch Size)
+\Require Preference dataset $\mathcal{D} = \{(x^{(i)}, y_w^{(i)},
+    y_l^{(i)})\}_{i=1}^N$
+\Require Reference model $\pi_{\text{ref}}$ (frozen),
+    policy $\pi_\theta$ (initialized from $\pi_{\text{ref}}$)
+\Require $\beta = 0.1$, learning rate $\eta$, batch size $B$
 
 \While{not converged}
-    \State Sample batch $\mathcal{B} \sim \mathcal{D}$ of size $B$
-    \State $\mathcal{L}_{\text{batch}} \leftarrow 0$
-    
+    \State Sample batch $\mathcal{B} \sim \mathcal{D}$
     \For{$(x, y_w, y_l)$ in $\mathcal{B}$}
-        \State \textcolor{gray}{// Compute log probabilities for chosen ($w$) and loser ($l$)}
-        \State $ \log \pi_\theta(y_w|x), \log \pi_\theta(y_l|x) \leftarrow \text{Forward}(\pi_\theta, x, y_w, y_l) $
-        \State $ \log \pi_{\text{ref}}(y_w|x), \log \pi_{\text{ref}}(y_l|x) \leftarrow \text{Forward}(\pi_{\text{ref}}, x, y_w, y_l) $
-        
-        \State \textcolor{gray}{// Calculate implicit rewards (log ratios)}
-        \State $ r_\theta(x, y_w) \leftarrow \beta \left( \log \pi_\theta(y_w|x) - \log \pi_{\text{ref}}(y_w|x) \right) $
-        \State $ r_\theta(x, y_l) \leftarrow \beta \left( \log \pi_\theta(y_l|x) - \log \pi_{\text{ref}}(y_l|x) \right) $
-        
-        \State \textcolor{gray}{// Compute DPO loss component}
-        \State $ \ell \leftarrow - \log \sigma \left( r_\theta(x, y_w) - r_\theta(x, y_l) \right) $
-        \State $ \mathcal{L}_{\text{batch}} \leftarrow \mathcal{L}_{\text{batch}} + \frac{1}{B} \ell $
+        \State Compute $\log \pi_\theta(y_w \mid x)$,
+            $\log \pi_\theta(y_l \mid x)$ via forward pass on $\pi_\theta$
+        \State Compute $\log \pi_{\text{ref}}(y_w \mid x)$,
+            $\log \pi_{\text{ref}}(y_l \mid x)$ via forward pass on
+            $\pi_{\text{ref}}$
+        \State $\hat{r}_\theta(x, y_w) \leftarrow \beta
+            \bigl(\log \pi_\theta(y_w \mid x)
+            - \log \pi_{\text{ref}}(y_w \mid x)\bigr)$
+        \State $\hat{r}_\theta(x, y_l) \leftarrow \beta
+            \bigl(\log \pi_\theta(y_l \mid x)
+            - \log \pi_{\text{ref}}(y_l \mid x)\bigr)$
+        \State $\ell \leftarrow
+            -\log \sigma\bigl(\hat{r}_\theta(x, y_w)
+            - \hat{r}_\theta(x, y_l)\bigr)$
     \EndFor
-    
-    \State Update $\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}_{\text{batch}}$
+    \State Update $\theta \leftarrow \theta
+        - \eta\, \nabla_\theta \frac{1}{B}\sum_{\mathcal{B}} \ell$
 \EndWhile
-\State \Return Optimized Policy $\pi_{\theta}$
+\State \Return $\pi_\theta$
 \end{algorithmic}
 \end{algorithm}
 
-\textbf{Remarkable property:} We can optimize the policy directly from preference data without ever training a reward model!
+The quantities $\hat{r}_\theta(x, y) = \beta \log (\pi_\theta(y \mid x) /
+\pi_{\text{ref}}(y \mid x))$ are the \emph{implicit rewards} induced by
+the policy --- the reward values for which $\pi_\theta$ is the optimal
+KL-constrained policy. DPO trains $\pi_\theta$ to assign higher implicit
+reward to preferred responses without ever materializing an explicit reward
+model.
 
-\textbf{Advantages of DPO}:
-\begin{itemize}
-\item Simpler: No reward model, no RL, just supervised learning on preferences
-\item More stable: No reward hacking, no PPO instabilities
-\item More efficient: Fewer models to train and deploy
-\item Competitive performance: Matches or exceeds PPO in practice
-\end{itemize}
-
-\textbf{Limitations}:
-\begin{itemize}
-\item Less flexible: Can't easily incorporate multiple objectives or constraints
-\item No reward introspection: Can't query "what's the reward of this response?"
-\item Assumes optimal KL-constrained solution (may be restrictive)
-\end{itemize}
-
-DPO has gained rapid adoption for its simplicity and effectiveness, though PPO remains valuable for complex multi-objective optimization.
+DPO is simpler, more stable, and more computationally efficient than PPO:
+it requires only two models (policy and frozen reference) rather than four,
+has no RL instabilities to manage, and runs as ordinary supervised learning.
+Its main limitation is that the implicit reward cannot be queried directly,
+making it harder to incorporate complex multi-objective constraints or to
+perform reward introspection. PPO remains useful when the reward function
+must combine multiple objectives with different relative weights, or when
+the training signal comes from a source other than pairwise comparisons.
 
 \subsection{Constitutional AI}
+\label{sec:constitutional_ai}
 
-Anthropic's Constitutional AI (CAI) addresses scalability: human preference labeling is expensive and slow \cite{bai2022}. Can we use AI to help supervise itself?
+Human preference labeling is expensive and scales poorly. Constitutional
+AI (CAI)~\cite{bai2022} addresses this by using the model itself to
+generate preference labels, guided by a set of explicit principles called
+a \emph{constitution}.
 
-\subsubsection{The Two-Phase Approach}
+The constitution is a list of natural language principles specifying
+desired behavior, for example: ``choose the response that is least likely
+to cause harm'', ``choose the response that is most truthful and
+acknowledges uncertainty'', ``choose the response that best respects human
+autonomy.'' These principles are transparent, auditable, and modifiable ---
+unlike implicit human preferences, the criteria driving model behavior can
+be inspected and updated.
 
-\textbf{Phase 1: Supervised Learning from Critiques and Revisions}
+Training proceeds in two phases. In the first phase, the model generates
+an initial response to a prompt, then critiques that response against each
+constitutional principle, then revises the response to address the critique.
+The original and revised responses form a supervised fine-tuning dataset:
 
-\begin{enumerate}
-\item Model generates initial response to prompt
-\item Model critiques its own response against constitutional principles:
-\begin{itemize}
-\item "Does this response contain harmful content?"
-\item "Is this response truthful and accurate?"
-\item "Does this response respect human autonomy?"
-\end{itemize}
-\item Model revises response based on critique
-\item Store pairs: $(y_{\text{original}}, y_{\text{revised}})$
-\end{enumerate}
-
-Train the policy via supervised learning to generate revised responses directly:
 \begin{equation}
-\mathcal{L}_{\text{CAI-SL}}(\theta) = -\mathbb{E}_{x} [\log \pi_\theta(y_{\text{revised}} | x)]
+\label{eq:cai_sft}
+\mathcal{L}_{\text{CAI}}(\theta)
+= -\mathbb{E}_{x}\!\left[
+    \log \pi_\theta(y_{\text{revised}} \mid x)
+\right]
 \end{equation}
 
-\textbf{Phase 2: RL from AI Feedback (RLAIF)}
+In the second phase, Reinforcement Learning from AI Feedback (RLAIF),
+the model generates multiple responses per prompt and an AI evaluator ---
+rather than a human --- compares pairs of responses according to the
+constitutional principles. These AI-generated preference labels are used
+to train a reward model and run standard PPO, exactly as in RLHF but
+with the human annotator replaced by the AI evaluator. Empirically, RLAIF
+produces reward models that match the quality of human-labeled RLHF on
+helpfulness, and sometimes exceed it on harmlessness, likely because AI
+labels are more consistent than human labels for nuanced safety judgments.
 
-\begin{enumerate}
-\item Generate multiple responses per prompt
-\item Use AI model to compare responses according to constitutional principles
-\item Create preference dataset: $(x, y_w, y_l)$ based on AI judgments
-\item Train reward model on AI preferences
-\item Apply PPO as in standard RLHF
-\end{enumerate}
+The key advantage of CAI is scalability: once the constitution is written,
+preference data can be generated automatically at low marginal cost. The
+open question is whether AI judgments align with the full diversity of
+human values, particularly across different cultures and populations --- a
+question that applies equally to RLHF, since human annotators also
+represent only a subset of perspectives.
 
-\subsubsection{Constitutional Principles}
+\section{Evaluation}
+\label{sec:rlhf_evaluation}
 
-The "constitution" is a set of natural language principles guiding behavior \cite{bai2022}:
+Evaluating RLHF models requires tracking several complementary metrics
+because no single measurement captures the full picture.
 
-\textbf{Harmlessness principles}:
-\begin{itemize}
-\item "Choose the response that is least likely to be considered harmful, offensive, or inappropriate"
-\item "Choose the response that avoids discrimination or stereotyping"
-\end{itemize}
+The reward model's predictive accuracy on held-out comparisons,
+Equation~\ref{eq:rm_accuracy}, provides the most direct measure of whether
+the learned reward function reflects human preferences. Values in the
+65--75\% range are typical; significantly below this suggests noisy
+annotations or insufficient data, and significantly above may indicate
+overfitting to annotator-specific patterns.
 
-\textbf{Helpfulness principles}:
-\begin{itemize}
-\item "Choose the response that is most helpful, truthful, and honest"
-\item "Choose the response that best answers the question while staying on topic"
-\end{itemize}
+During RL training, the KL divergence from the reference policy:
 
-\textbf{Key advantage:} Principles are transparent, editable, and auditable. Unlike implicit human preferences, we can inspect and modify the constitution.
-
-\subsubsection{Effectiveness}
-
-Empirical results show:
-\begin{itemize}
-\item AI critique + revision reduces harmful outputs by 50-90\%
-\item RLAIF matches human-labeled RLHF on helpfulness
-\item RLAIF sometimes exceeds human-labeled RLHF on harmlessness (less noisy labels)
-\item Dramatically reduces human labeling costs
-\end{itemize}
-
-\textbf{Open questions}:
-\begin{itemize}
-\item Do AI judgments align with diverse human populations?
-\item Can models effectively critique their own blindspots?
-\item How do we prevent gaming of AI evaluators?
-\end{itemize}
-
-\subsection{Iterative RLHF}
-
-Standard RLHF trains the reward model once on data from $\pi^{\text{SFT}}$. But as the policy improves during RL, it explores new regions of response space. The reward model may become miscalibrated on these new responses.
-
-\subsubsection{The Distribution Shift Problem}
-
-\textbf{Training:} Reward model sees responses from $\pi^{\text{SFT}}$
-
-\textbf{Deployment:} Policy $\pi_\theta$ generates different responses after RL
-
-\textbf{Consequence:} Reward model predictions become less reliable. The policy might exploit these inaccuracies (reward hacking).
-
-\subsubsection{Iterative Training}
-
-\textbf{Solution:} Periodically retrain the reward model on new data \cite{ouyang2022training}:
-
-\begin{enumerate}
-\item Train initial reward model on samples from $\pi^{\text{SFT}}$
-\item Run PPO to optimize policy $\rightarrow \pi_\theta^{(1)}$
-\item Collect new preference data: sample responses from $\pi_\theta^{(1)}$, get human labels
-\item Retrain reward model on combined data: old + new preferences
-\item Run PPO with updated reward model $\rightarrow \pi_\theta^{(2)}$
-\item Repeat...
-\end{enumerate}
-
-\textbf{Benefits}:
-\begin{itemize}
-\item Reward model stays calibrated on current policy distribution
-\item Reduces reward hacking
-\item Enables continuous improvement beyond single RL phase
-\end{itemize}
-
-\textbf{Challenges}:
-\begin{itemize}
-\item Requires ongoing human labeling
-\item More complex training pipeline
-\item Risk of reward model overfitting to recent data
-\end{itemize}
-
-In practice, 2-3 iterations of reward model retraining provide most benefits.
-
-\section{Evaluation and Metrics}
-
-How do we measure whether RLHF actually improves model behavior? \cite{liang2022helm}
-
-\subsection{Reward Model Metrics}
-
-\textbf{Accuracy:} Fraction of preference pairs correctly ranked on held-out test set.
 \begin{equation}
-\text{Acc} = \frac{1}{|\mathcal{D}_{\text{test}}|} \sum_{(x,y_w,y_l)} \mathbb{I}[r_\phi(x,y_w) > r_\phi(x,y_l)]
+\label{eq:eval_kl}
+\mathrm{KL} = \mathbb{E}_x\, \mathbb{E}_{y \sim \pi_\theta}
+    \left[ \log \frac{\pi_\theta(y \mid x)}{\pi^{\text{SFT}}(y \mid x)} \right]
 \end{equation}
 
-Target: 70-75\% (compared to 70-80\% human-human agreement).
+should be monitored continuously. A rapidly growing KL is an early warning
+sign of reward hacking or mode collapse. Perplexity on a held-out language
+modeling benchmark measures whether the policy retains fluency; a large
+increase indicates the model is losing general language capability.
 
-\textbf{Calibration:} Do predicted probabilities match empirical frequencies?
+The most direct measure of improvement is the win rate: collecting new
+human preference comparisons between the RL-optimized policy and the SFT
+baseline:
 
-Bin predictions by probability: $[0\text{-}0.1), [0.1\text{-}0.2), \ldots, [0.9\text{-}1.0]$.
-
-For each bin, compute:
-\begin{itemize}
-\item Mean predicted probability: $\bar{p}$
-\item Empirical frequency: $f$ (fraction where $y_w$ was actually preferred)
-\end{itemize}
-
-Well-calibrated: $\bar{p} \approx f$ across bins.
-
-\textbf{Ranking Correlation:} For prompts with $k > 2$ responses, compute ranking correlation between reward model scores and human rankings (Spearman's $\rho$ or Kendall's $\tau$).
-
-\subsection{Policy Evaluation Metrics}
-
-\textbf{Reward Model Score:} Average reward on evaluation prompts.
 \begin{equation}
-\bar{r} = \frac{1}{|\mathcal{D}_{\text{eval}}|} \sum_{x \in \mathcal{D}_{\text{eval}}} r_\phi(x, y) \quad \text{where } y \sim \pi_\theta(\cdot|x)
+\label{eq:win_rate}
+\text{Win rate}
+= \frac{\#(\pi_{\text{RL}} \text{ preferred})}
+       {\#(\text{total comparisons})}
 \end{equation}
 
-Track reward vs. training iterations---should increase then plateau.
-
-\textbf{KL Divergence from Reference:} Measures policy drift.
-\begin{equation}
-\text{KL} = \mathbb{E}_x \mathbb{E}_{y \sim \pi_\theta} \left[ \log \frac{\pi_\theta(y|x)}{\pi^{\text{SFT}}(y|x)} \right]
-\end{equation}
-
-Monitor to ensure KL stays reasonable ($< 5$-10 nats typically).
-
-\textbf{Perplexity:} Language modeling loss on held-out text.
-\begin{equation}
-\text{Perplexity} = \exp\left(-\frac{1}{N} \sum_{i=1}^{N} \log \pi_\theta(y_i | x_i)\right)
-\end{equation}
-
-Should remain low---if perplexity spikes, the model is losing fluency.
-
-\textbf{Win Rate:} Collect new human preferences comparing RL policy to baseline.
-\begin{equation}
-\text{Win Rate} = \frac{\#(\pi_{\text{RL}} \text{ preferred})}{\#(\text{total comparisons})}
-\end{equation}
-
-Target: 55-65\% (significantly above 50\% random).
-
-\subsection{Human Evaluation}
-
-Automated metrics provide signals, but human evaluation remains the gold standard:
-
-\textbf{Helpfulness:} Does the response adequately address the prompt?
-
-\textbf{Harmlessness:} Does the response avoid problematic content?
-
-\textbf{Honesty:} Does the response avoid hallucination and acknowledge limitations \cite{lin2021truthfulqa}?
-
-\textbf{Coherence:} Is the response well-written and logically structured?
-
-\textbf{Preference:} Overall, which response do you prefer?
-
-Typical protocol:
-\begin{itemize}
-\item Sample 500-1000 evaluation prompts spanning diverse categories
-\item Generate responses from both baseline and RL models
-\item Recruit expert raters (10-50 raters)
-\item Each comparison rated by 3-5 raters
-\item Compute inter-rater agreement (Fleiss' $\kappa$ or Krippendorff's $\alpha$)
-\item Report win rates and confidence intervals
-\end{itemize}
-
-\subsection{Safety Evaluation}
-
-\textbf{Adversarial Testing:} Red-teaming to find problematic outputs.
-\begin{itemize}
-\item Hire adversarial users to try to elicit harmful responses
-\item Maintain database of failure cases
-\item Measure rate of successful attacks: \% of attempts that produce harmful output
-\end{itemize}
-
-\textbf{Demographic Bias:} Test for disparate performance across demographics.
-\begin{itemize}
-\item Does the model respond differently to names suggesting different genders/ethnicities?
-\item Are outputs stereotypical or discriminatory?
-\item Use templates varying only demographic markers
-\end{itemize}
-
-\textbf{Toxicity Detection:} Run outputs through automated toxicity classifiers.
-\begin{itemize}
-\item Tools: Perspective API, Detoxify
-\item Measure: \% of responses flagged as toxic
-\item Target: $< 1$-2\% on neutral prompts
-\end{itemize}
-
-\section{Practical Considerations and Challenges}
-
-\subsection{Data Quality and Annotation}
-
-\textbf{Annotator Agreement:} Low agreement indicates unclear guidelines or subjective preferences.
-
-Typical Fleiss' $\kappa$:
-\begin{itemize}
-\item $\kappa < 0.4$: Poor agreement---revise guidelines
-\item $0.4 \leq \kappa < 0.6$: Moderate agreement---acceptable for initial training
-\item $\kappa \geq 0.6$: Good agreement---high-quality data
-\end{itemize}
-
-\textbf{Guidelines Matter:} Invest heavily in annotator training and documentation.
-\begin{itemize}
-\item Provide clear definitions of quality dimensions
-\item Include positive and negative examples
-\item Regular calibration sessions with annotators
-\item Ongoing communication channel for questions
-\end{itemize}
-
-\textbf{Annotator Diversity:} Preferences vary across demographics and cultures.
-\begin{itemize}
-\item Recruit diverse annotator pool
-\item Consider multiple preference models for different user groups
-\item Be transparent about training data demographics
-\end{itemize}
-
-\subsection{Computational Budget}
-
-RLHF training costs significantly more than supervised fine-tuning:
-
-\textbf{Example (7B parameter model):}
-\begin{itemize}
-\item SFT: 10K examples, 1 epoch, 8$\times$ A100 GPUs, 2 hours $\approx$ \$50
-\item Reward model: 100K comparisons, 1 epoch, 8$\times$ A100 GPUs, 4 hours $\approx$ \$100
-\item PPO: 500 iterations, 8$\times$ A100 GPUs, 20 hours $\approx$ \$500
-\item \textbf{Total:} $\sim$\$650 for RLHF vs. $\sim$\$50 for SFT alone
-\end{itemize}
-
-\textbf{For larger models (70B+ parameters):} Costs scale super-linearly due to memory constraints requiring more parallelism \cite{rajbhandari2020zero, zhao2023pytorch}.
-
-\textbf{Strategies to reduce cost:}
-\begin{itemize}
-\item LoRA \cite{hu2021lora}: Reduces trainable parameters by 100$\times$, cuts costs proportionally
-\item Smaller batch sizes: Trade-off stability for compute
-\item Fewer PPO epochs: Use $K=2$ instead of $K=4$
-\item Shorter training: Stop early based on validation metrics
-\item DPO \cite{rafailov2023}: Simpler training, $\sim$50\% cost reduction vs. PPO
-\end{itemize}
-
-\subsection{Reward Hacking Mitigation}
-
-\textbf{Ensemble Reward Models:} Train multiple reward models and use their average or minimum.
-\begin{equation}
-r_{\text{ensemble}}(x,y) = \min_{i} r_{\phi_i}(x,y) \quad \text{or} \quad \frac{1}{K}\sum_{i=1}^{K} r_{\phi_i}(x,y)
-\end{equation}
-
-Taking the minimum is pessimistic---the policy must satisfy all reward models.
-
-\textbf{Uncertainty Quantification:} Train Bayesian reward models that output uncertainty estimates.
-\begin{itemize}
-\item Penalize high-uncertainty responses
-\item Request human feedback for high-uncertainty cases
-\item Use ensemble variance as uncertainty proxy
-\end{itemize}
-
-\textbf{KL Penalty Tuning:} Increase $\beta$ if reward hacking is detected.
-\begin{itemize}
-\item Start with small $\beta = 0.01$
-\item Monitor for mode collapse or quality degradation
-\item Increase $\beta$ to 0.05-0.1 if issues arise
-\end{itemize}
-
-\textbf{Length Normalization:} Reward models sometimes prefer longer responses.
-\begin{equation}
-r_{\text{normalized}}(x,y) = \frac{r_\phi(x,y)}{|y|^\alpha}
-\end{equation}
-
-where $\alpha \in [0.1, 0.5]$ penalizes length. Tune $\alpha$ based on target length distribution.
+A win rate significantly above 50\% against the SFT baseline confirms
+that RL optimization is producing genuine improvements rather than
+reward model exploitation. Tracking reward model score alongside KL
+divergence also helps diagnose reward hacking: if reward increases while
+KL grows rapidly and win rate stops improving, the policy is likely
+exploiting reward model weaknesses rather than improving genuine quality.
 
 \section{Conclusion}
+\label{sec:rlhf_conclusion}
 
-Reinforcement Learning from Human Feedback represents a fundamental advance in AI alignment---enabling us to train models on complex, subjective objectives that resist formal specification. By learning reward functions from comparative human preferences, RLHF has made modern language models dramatically more helpful, harmless, and honest.
+RLHF resolves a tension that no amount of pre-training or supervised
+fine-tuning can address: the gap between what can be specified as a
+training objective and what humans actually want. Pre-training maximizes
+likelihood over internet text, which includes harmful, misleading, and
+low-quality content alongside the useful. Supervised fine-tuning on
+demonstrations can improve quality but is bounded by the quality of
+whatever demonstrations are available and cannot directly optimize the
+subjective dimensions of helpfulness and harmlessness that matter most in
+deployment.
+
+RLHF reframes the problem: instead of specifying what good behavior looks
+like, we learn it from comparisons. The reward model distills human
+preferences into a differentiable signal; the KL constraint prevents
+optimization from exploiting the reward model's inevitable imperfections;
+and the RL loop pushes the policy toward behavior that humans genuinely
+prefer rather than behavior that merely resembles demonstrated responses.
+DPO shows that the RL loop itself can be eliminated when the training
+signal comes from pairwise preferences, by directly training the policy
+to assign higher implicit reward to preferred responses.
+
+The fundamental challenge that RLHF addresses --- aligning a learned system
+with values that are difficult to specify formally --- is not unique to
+language models. It is the central problem of applied machine learning:
+our ability to optimize objectives has far outpaced our ability to specify
+the right objectives. RLHF is one answer to that challenge, and
+understanding it deeply provides a foundation for whatever alignment
+methods emerge as the field continues to develop.
 
 \chapter{Flow Models Theory}
 
@@ -11966,6 +11795,11 @@ Vijay~R. Konda and John~N. Tsitsiklis.
 John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel.
 \newblock High-dimensional continuous control using generalized advantage estimation.
 \newblock In {\em Proceedings of the International Conference on Learning Representations (ICLR)}, 2016.
+
+\bibitem{bradley1952rank}
+Ralph~Allan Bradley and Milton~E. Terry.
+\newblock Rank analysis of incomplete block designs: I. The method of paired comparisons.
+\newblock {\em Biometrika}, 39(3/4):324--345, 1952.
 
 
 \end{thebibliography}
