@@ -6097,7 +6097,7 @@ formulas directly. To use them for REINFORCE, we construct a
 \emph{pseudo-loss} $\tilde{L}(\theta)$ whose gradient with respect to
 $\theta$ equals the negative policy gradient.
 
-Recall the cross-entropy loss in multi-class classification with classes
+Recall the cross-entropy (Section!\ref{sec:cross-entropy}) loss in multi-class classification with classes
 $\{1, \ldots, K\}$:
 \begin{equation}
 \label{eq:cross_entropy}
@@ -6127,23 +6127,8 @@ we compute the gradient of $\tilde{L}$ step by step.
 \label{eq:pseudo_loss_grad_step1}
 \end{align}
 
-\textbf{Step 2: Expand the log-gradient using the chain rule.}
-\begin{align}
-\nabla_\theta \log \pi_\theta(a_{i,t} \mid s_{i,t})
-&= \frac{\nabla_\theta \pi_\theta(a_{i,t} \mid s_{i,t})}
-        {\pi_\theta(a_{i,t} \mid s_{i,t})}
-\label{eq:pseudo_loss_grad_step2}
-\end{align}
 
-Substituting back:
-\begin{align}
-\nabla_\theta \tilde{L}(\theta)
-&= -\frac{1}{N} \sum_{i,t} G_{i,t}\,
-    \nabla_\theta \log \pi_\theta(a_{i,t} \mid s_{i,t})
-\label{eq:pseudo_loss_grad_step3}
-\end{align}
-
-\textbf{Step 3: Compare with the policy gradient.}
+\textbf{Step 2: Compare with the policy gradient.}
 
 From Equation~\ref{eq:reinforce_gradient}:
 \begin{equation}
