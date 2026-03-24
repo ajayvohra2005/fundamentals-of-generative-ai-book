@@ -5724,780 +5724,769 @@ model behavior toward safety, honesty, and helpfulness.
 
 
 \chapter{Introduction to Reinforcement Learning}
-
-\section{Core Concepts}
-
-\subsection{The Reinforcement Learning Problem}
-
-\subsubsection{What Makes RL Different?}
-
-Imagine learning to ride a bicycle. You don't have a teacher telling you ``turn the handlebars exactly 3.2 degrees left now''---instead, you try something, observe what happens (maybe you wobble), and adjust your strategy accordingly. This trial-and-error learning, where your actions shape your experience, is the essence of Reinforcement Learning.
-
-
-
-Reinforcement Learning (RL) differs fundamentally from standard supervised learning in several critical ways:
-
-\textbf{The i.i.d. Assumption:} In supervised learning, we typically assume independent and identically distributed (i.i.d.) data. Think of a dataset of cat and dog photos: each photo exists independently, and showing the model one photo doesn't change what the next photo will be. The model's predictions don't influence the data distribution.
-
-\textbf{The Interactive Nature of RL:} In RL, the agent interacts with the world, and its actions directly influence the future observations it perceives. If a robot turns left at an intersection, it will see a completely different set of observations than if it had turned right. The data is inherently \emph{not} i.i.d.; past actions shape future states.
-
-\textbf{Delayed Consequences:} Unlike supervised learning where feedback is immediate and explicit (``this is a cat''), RL agents must learn from sparse, delayed rewards. A chess move might only reveal its quality many moves later when the game ends. This credit assignment problem---figuring out which past actions led to success or failure---is one of RL's central challenges.
-
-The core framework for RL is decision-making under uncertainty, formalized as a \textbf{Markov Decision Process (MDP)}.
-
-\subsection{Terminology \& Notation}
-
-Before diving into the mathematical formalism, let's establish the vocabulary of RL. Think of these as the ``cast of characters'' in our story:
-
-\begin{itemize}
-    \item \textbf{State ($s_t$):} A complete description of the state of the world at time $t$. 
-    
-    \emph{Analogy:} In chess, the state is the position of every piece on the board. In principle, knowing the state means having all the information needed to predict what could happen next.
-    
-    \item \textbf{Observation ($o_t$):} A partial description of the state (e.g., an image from a camera). 
-    
-    \emph{Analogy:} If you're playing poker, your observation includes your own cards and the community cards you can see, but not your opponents' hidden cards. The true state includes everyone's cards, but you only observe part of it. In fully observed environments, $s_t = o_t$.
-    
-    \item \textbf{Action ($a_t$):} The decision made by the agent at time $t$.
-    
-    \emph{Analogy:} The steering angle you choose when driving, the chess move you make, or the direction your robot decides to walk.
-    
-    \item \textbf{Policy ($\pi_\theta$):} The agent's decision-making function, parameterized by $\theta$. This is the ``brain'' of the agent---the strategy it follows to choose actions.
-    
-    The policy can be \emph{stochastic} (choosing actions probabilistically) or \emph{deterministic} (always choosing the same action in the same state).
-    
-    \begin{itemize}
-        \item $\pi_\theta(a_t | o_t)$: The probability of taking action $a_t$ given observation $o_t$.
-        \item $\pi_\theta(a_t | s_t)$: Policy mapping states to actions (in fully observed settings).
-    \end{itemize}
-    
-    The parameters $\theta$ might be the weights of a neural network that processes observations and outputs action probabilities.
-\end{itemize}
-
-\subsection{The Markov Decision Process (MDP)}
-
-An MDP provides the mathematical scaffolding for RL. It's a formal way to describe an environment where outcomes are partly random and partly under the control of a decision-maker.
-
-\textbf{Formal Definition:} An MDP is defined by the tuple $\mathcal{M} = \{\mathcal{S}, \mathcal{A}, \mathcal{T}, r\}$.
-
-Let's unpack each component:
-
-\begin{enumerate}
-    \item \textbf{State Space ($\mathcal{S}$):} The set of all valid states the environment can be in.
-    
-    \emph{Mathematical Detail:} $s \in \mathcal{S}$ means state $s$ is an element of the state space. This can be:
-    \begin{itemize}
-        \item \emph{Discrete:} A finite or countably infinite set. Example: positions on a chess board ($|\mathcal{S}| \approx 10^{43}$ possible positions).
-        \item \emph{Continuous:} An uncountably infinite set. Example: the configuration space of a robot arm, $\mathcal{S} = \mathbb{R}^n$ where $n$ is the number of joints.
-    \end{itemize}
-    
-    \item \textbf{Action Space ($\mathcal{A}$):} The set of all valid actions available to the agent.
-    
-    \emph{Examples:}
-    \begin{itemize}
-        \item Discrete: $\mathcal{A} = \{\text{up}, \text{down}, \text{left}, \text{right}\}$ for a grid-world robot.
-        \item Continuous: $\mathcal{A} = [-1, 1]^2$ for controlling the torques on two robot joints.
-    \end{itemize}
-    
-    \item \textbf{Transition Operator ($\mathcal{T}$):} Defines the dynamics of the system---the ``physics'' of how the world evolves.
-    
-    \emph{Mathematical Formulation:} The transition operator specifies:
-    \[ p(s_{t+1} | s_t, a_t) \]
-    This is the probability distribution over next states $s_{t+1}$ given that we're currently in state $s_t$ and take action $a_t$.
-    
-    \emph{Analogy:} If you're driving and turn the steering wheel left (action $a_t$), the transition operator determines where your car will be next (state $s_{t+1}$). In a deterministic world, this is exact; in reality, factors like road conditions add randomness.
-    
-    \emph{Tensor Representation (Discrete Case):} When both $\mathcal{S}$ and $\mathcal{A}$ are discrete with sizes $|\mathcal{S}|$ and $|\mathcal{A}|$, we can represent $\mathcal{T}$ as a three-dimensional tensor:
-    \[ \mathcal{T}_{i,j,k} = p(s_{t+1}=i | s_t=j, a_t=k) \]
-    where $i, j \in \{1, \ldots, |\mathcal{S}|\}$ and $k \in \{1, \ldots, |\mathcal{A}|\}$.
-    
-    This tensor has $|\mathcal{S}|^2 \times |\mathcal{A}|$ entries. For each state-action pair $(j,k)$, the slice $\mathcal{T}_{:,j,k}$ forms a probability distribution over next states, so $\sum_{i=1}^{|\mathcal{S}|} \mathcal{T}_{i,j,k} = 1$.
-    
-    \item \textbf{Reward Function ($r$):} A scalar signal indicating the immediate utility of a state-action pair.
-    
-    \emph{Formal Definition:}
-    \[ r: \mathcal{S} \times \mathcal{A} \rightarrow \mathbb{R} \]
-    \[ r(s, a) \text{ represents the immediate reward for taking action } a \text{ in state } s \]
-    
-    Sometimes we also see $r(s, a, s')$ or just $r(s)$, depending on the problem.
-    
-    \emph{Analogy:} The reward is like a ``score'' the environment gives you. Finding food gives a robot positive reward (+10), bumping into a wall gives negative reward (-1). The agent's goal is to maximize the sum of these scores over time.
-    
-    \emph{Design Consideration:} Reward design is crucial and subtle. If you reward a robot for ``moving forward quickly,'' it might learn to spin in circles (technically moving forward in each spin). Specifying \emph{what} we want without specifying \emph{how} to achieve it is both RL's power and its challenge.
-\end{enumerate}
-
-\textbf{The Markov Property:}
-
-The system is ``Markovian'' if the future is independent of the past given the present. This is a monumentally important assumption that makes RL tractable.
-
-\emph{Formal Statement:} 
-\[ p(s_{t+1} | s_t, a_t, s_{t-1}, a_{t-1}, \ldots, s_1, a_1) = p(s_{t+1} | s_t, a_t) \]
-
-In words: if you know the current state $s_t$, knowing the entire history of how you got there provides no additional information for predicting the future.
-
-\emph{Analogy:} It's like playing Monopoly. If I tell you the current board position (who owns what, everyone's money, current location), you can predict what might happen next. The sequence of dice rolls and moves that led to this position is irrelevant---all that matters is the current configuration.
-
-\emph{What if the Markov property doesn't hold?} In practice, many problems appear non-Markovian when we use observations $o_t$ instead of true states $s_t$. For example, velocity isn't Markovian if we only observe position at a single time step (we need at least two positions to estimate velocity). The solution is to augment the state to include enough history: $s_t = (o_t, o_{t-1}, \ldots, o_{t-k})$.
-
-\subsection{The Goal of Reinforcement Learning}
-
-Now that we have the MDP formalism, we can precisely state what we're trying to achieve in RL.
-
-\textbf{High-Level Goal:} Find the policy $\pi_\theta$ (parameterized by $\theta$) that maximizes the expected cumulative reward over time.
-
-\subsubsection{The Trajectory Distribution (Finite Horizon)}
-
-A \emph{trajectory} $\tau$ is a sequence of states and actions:
-\[ \tau = (s_1, a_1, s_2, a_2, \ldots, s_T, a_T) \]
-
-The probability of observing a particular trajectory under policy $\pi_\theta$ is determined by the environment dynamics and the policy. We decompose this joint probability using the \textbf{chain rule of probability}, and then simplify it using the \textbf{Markov property} (which assumes that the next state depends only on the current state and action):
-
-\[ p_\theta(\tau) = p_\theta(s_1, a_1, \ldots, s_T, a_T) \]
-
-\emph{Step-by-step breakdown:}
-
-\begin{align}
-p_\theta(\tau) &= p(s_1) \prod_{t=1}^T p(a_t | s_1, a_1, \ldots, s_t) \cdot p(s_{t+1} | s_1, a_1, \ldots, s_t, a_t) && (\text{Chain Rule}) \\
-&= p(s_1) \prod_{t=1}^T \pi_\theta(a_t | s_t) \cdot p(s_{t+1} | s_t, a_t) && (\text{Markov Property})
-\end{align}
-
-\emph{Interpretation:} 
-\begin{itemize}
-    \item $p(s_1)$: The initial state distribution (where we start).
-    \item $\pi_\theta(a_t | s_t)$: Our policy chooses action $a_t$ given state $s_t$.
-    \item $p(s_{t+1} | s_t, a_t)$: The environment responds with the next state (the transition dynamics).
-\end{itemize}
-
-The product alternates between policy choices (what we control) and environmental transitions (what we don't control).
-
-\subsubsection{Infinite Horizon Case}
-
-For continuing tasks where the interaction goes on indefinitely (i.e., $T \to \infty$), the trajectory $\tau$ becomes an infinite sequence:
-\[ \tau = (s_1, a_1, s_2, a_2, \ldots) \]
-
-The probability distribution over this infinite trajectory extends the previous derivation by taking the product to infinity:
-
-\begin{align}
-p_\theta(\tau) &= p(s_1) \prod_{t=1}^\infty \pi_\theta(a_t | s_t) \cdot p(s_{t+1} | s_t, a_t)
-\end{align}
-
-\subsubsection{Marginal Probability of State-Action Pairs}
-
-While the trajectory distribution considers the entire sequence, we are often interested in the \emph{marginal probability} of being in a specific state $s_t$ and taking action $a_t$ at time $t$. Using the chain rule, this decomposes as:
-
-\[ p_\theta(s_t, a_t) = \pi_\theta(a_t | s_t) \cdot p_\theta(s_t) \]
-
-Here, $p_\theta(s_t)$ is the state density at time $t$. It is defined recursively using the law of total probability and the Markov property, summing over all paths from the previous time step:
-
-\begin{align}
-p_\theta(s_t) &= \sum_{s_{t-1}} \sum_{a_{t-1}} p(s_t | s_{t-1}, a_{t-1}) \cdot p_\theta(s_{t-1}, a_{t-1}) \\
-&= \sum_{s_{t-1}} \sum_{a_{t-1}} \underbrace{p(s_t | s_{t-1}, a_{t-1})}_{\text{Dynamics}} \cdot \underbrace{\pi_\theta(a_{t-1} | s_{t-1})}_{\text{Policy}} \cdot \underbrace{p_\theta(s_{t-1})}_{\text{Previous State}}
-\end{align}
-
-\subsubsection{Finite Horizon Objective}
-
-For a task with a fixed time horizon $T$ (like a game that always lasts exactly 100 turns), the optimization objective is:
-
-\[ \theta^* = \arg \max_\theta E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^T r(s_t, a_t) \right] \]
-
-\emph{Reading this equation:}
-\begin{itemize}
-    \item $\sum_{t=1}^T r(s_t, a_t)$: The total reward along trajectory $\tau$.
-    \item $E_{\tau \sim p_\theta(\tau)}[\cdot]$: The expected value over all possible trajectories.
-    \item $\arg \max_\theta$: Find the parameters $\theta$ that maximize this expectation.
-\end{itemize}
-
-\emph{Expanding the expectation:}
-
-\[ E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^T r(s_t, a_t) \right] = \int p_\theta(\tau) \sum_{t=1}^T r(s_t, a_t) \, d\tau \]
-
-In discrete state/action spaces, this integral becomes a sum over all possible trajectories. Since the number of trajectories grows exponentially with $T$ (there are $|\mathcal{A}|^T \times |\mathcal{S}|^T$ possible trajectories), we typically estimate this expectation using sampling.
-
-\subsubsection{Infinite Horizon Objective}
-
-Many real-world tasks don't have a natural endpoint---a self-driving car should drive well indefinitely, a thermostat should regulate temperature continuously.
-
-When $T \rightarrow \infty$, we need a different approach. We look for a \textbf{stationary distribution} $\mu = p_\theta(s, a)$.
-
-\emph{What is a stationary distribution?} It is a probability distribution over state-action pairs that remains constant over time. If the agent interacts for an infinite horizon using a fixed policy $\pi_\theta$, the state-action distribution may converge to a \emph{stationary distribution} $\mu(s, a)$. As $t \to \infty$, the distribution becomes time-independent ($p(s_{t}, a_{t}) \approx p(s_{t+1}, a_{t+1}) \approx \mu(s,a)$).
-
-Formally, $\mu$ is stationary if it satisfies the balance equation:
-
-\[ \mu(s', a') = \pi_\theta(a'|s') \sum_{s,a} p(s'|s,a) \mu(s, a) \]
-
-\emph{Intuition:} If you run your policy for a very long time, what fraction of your total time will you spend in a particular (state, action) pair? The stationary distribution answers this question. It's the ``equilibrium'' distribution.
-
-\emph{Compact notation:} We often write $\mu = \mathcal{T}\mu$, where $\mathcal{T}$ is the transition operator that propagates the distribution forward one time step.
-
-The infinite horizon objective (specifically the \textbf{Average Reward} formulation) becomes:
-
-\[ \theta^* = \arg \max_\theta \mathbb{E}_{(s,a) \sim \mu(s,a)} [r(s,a)] \]
-
-\emph{Expanded:}
-
-\[ = \arg \max_\theta \sum_{s \in \mathcal{S}} \sum_{a \in \mathcal{A}} \mu(s,a) \cdot r(s,a) \]
-
-\emph{Practical consideration (Discounted Reward):} In practice, we often use a \textbf{discount factor} $\gamma \in (0,1)$ to ensure the sum converges and to prioritize immediate rewards:
-
-\[ \theta^* = \arg \max_\theta \mathbb{E}_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^\infty \gamma^t r(s_t, a_t) \right] \]
-
-\subsection{The Anatomy of an RL Algorithm}
-
-Despite the diversity of RL algorithms---from Q-learning to policy gradients to model-based methods---most follow a common structural pattern. Understanding this pattern helps clarify how different algorithms relate to one another.
-
-The typical RL algorithm follows a cyclical three-step structure:
-
-\begin{enumerate}
-    \item \textbf{Generate Samples:} Run the current policy $\pi_\theta$ in the environment to collect trajectory data.
-    
-    \emph{What happens:} The agent interacts with the environment, recording $(s_t, a_t, r_t, s_{t+1})$ tuples. This is the only way to learn about the environment---through direct experience.
-    
-    \emph{Analogy:} A scientist conducting experiments to gather data about how a system behaves.
-    
-    \item \textbf{Fit Model / Estimate Return:} Use the samples to estimate the performance of the policy.
-    
-    This step varies widely across algorithms:
-    \begin{itemize}
-        \item \textbf{Model-based methods:} Fit a dynamics model $\hat{p}(s_{t+1}|s_t, a_t)$ to predict how the environment behaves.
-        \item \textbf{Value-based methods:} Estimate a value function $V^\pi(s)$ or $Q^\pi(s,a)$ that predicts expected future rewards.
-        \item \textbf{Policy gradient methods:} Estimate the gradient $\nabla_\theta J(\theta)$ using the collected samples.
-        \item \textbf{Simple Monte Carlo:} Just sum up the rewards $\sum_t r_t$ for each trajectory.
-    \end{itemize}
-    
-    \item \textbf{Improve Policy:} Update $\theta$ to make the policy better, based on the estimates from step 2.
-    
-    \emph{Update rule:} Typically uses gradient ascent:
-    \[ \theta_{new} = \theta_{old} + \alpha \nabla_\theta J(\theta) \]
-    where $\alpha$ is the learning rate and $J(\theta)$ is our objective.
-    
-    \emph{The fundamental challenge:} How do we improve the policy based on limited, noisy samples from a non-i.i.d. data distribution? This is where different RL algorithms diverge most significantly.
-\end{enumerate}
-
-\textbf{The Loop Continues:} After updating the policy, we return to step 1 with our new policy $\pi_{\theta_{new}}$, collect more data, and repeat. Over many iterations, the policy gradually improves.
-
-\emph{Key insight:} The data distribution $p_\theta(\tau)$ changes after every policy update! This non-stationarity is a central challenge in RL and distinguishes it from supervised learning where the data distribution is typically fixed.
-
-\textbf{Notes on Algorithm Structure:}
-
-\begin{itemize}
-    \item The sampling step implements the agent-environment interaction loop that generates the trajectory distribution $p_\theta(\tau)$.
-    
-    \item The return estimation often involves a Monte Carlo estimate of $J(\theta) = E_\tau[\sum_t r_t]$ using the finite sample average $\hat{J}(\theta) = \frac{1}{N}\sum_{i=1}^N \sum_t r_t^{(i)}$.
-    
-    \item The policy improvement step in real algorithms would compute policy gradients, temporal difference errors, or model predictions to guide the update in a principled direction.
-    
-    \item This pattern---sample, evaluate, improve---appears in virtually all RL algorithms, though the details of steps 2 and 3 vary dramatically.
-\end{itemize}
+\label{ch:rl}
+
+\section{The Reinforcement Learning Problem}
+\label{sec:rl_problem}
+
+\subsection{What Makes RL Different}
+\label{sec:rl_different}
+
+Imagine learning to ride a bicycle. No instructor tells you to turn the
+handlebars exactly 3.2 degrees left at a particular moment --- instead,
+you try something, observe what happens, and adjust your strategy
+accordingly. This trial-and-error process, where your actions shape your
+experience and your experience shapes your actions, is the essence of
+reinforcement learning.
+
+Reinforcement learning differs from supervised learning in three
+fundamental respects. In supervised learning, training examples are
+independent and identically distributed: showing the model one image does
+not change what the next image will be, and the model's predictions have
+no effect on the data it sees. In RL, the agent's actions directly
+determine which states it visits next, which determines what it
+observes, which determines what future actions are available. The data is
+inherently not i.i.d.; the distribution over future observations is a
+consequence of past decisions.
+
+The second difference is delayed consequences. In supervised learning,
+feedback is immediate and explicit: the loss tells you precisely how wrong
+each prediction was. In RL, the consequences of an action may only become
+apparent many steps later. A chess move may only reveal its quality when
+the game ends. This \emph{credit assignment problem} --- determining which
+past actions caused eventual success or failure --- is one of the central
+difficulties of RL.
+
+The third difference follows from the first two: the agent must balance
+exploration (trying actions whose consequences are unknown) with
+exploitation (repeating actions known to yield good outcomes). A supervised
+learner has no such tension; the training set is fixed. An RL agent that
+never explores may converge to a suboptimal policy, while one that never
+exploits never accumulates reward. All practical RL algorithms must manage
+this trade-off.
+
+The formal framework for RL is the Markov Decision Process.
+
+\subsection{The Markov Decision Process}
+\label{sec:mdp}
+
+A Markov Decision Process (MDP) provides the mathematical scaffolding for
+sequential decision-making under uncertainty. An MDP is defined by the
+tuple $\mathcal{M} = (\mathcal{S}, \mathcal{A}, \mathcal{T}, r, \gamma)$,
+where each component plays a distinct role.
+
+The \textbf{state space} $\mathcal{S}$ is the set of all configurations
+the environment can be in. A state $s \in \mathcal{S}$ is a complete
+description of the world at a given moment --- complete in the sense that
+knowing $s$ is sufficient to predict everything relevant about the future.
+State spaces may be discrete (the positions of pieces on a chessboard,
+with roughly $10^{43}$ possible states) or continuous (the joint angles
+of a robot arm, living in $\mathbb{R}^n$).
+
+The \textbf{action space} $\mathcal{A}$ is the set of decisions available
+to the agent. Actions may likewise be discrete (move up, down, left, or
+right in a grid world) or continuous (apply a torque in $[-1, 1]^2$ to
+two robot joints).
+
+The \textbf{transition operator} $\mathcal{T}$ specifies how the world
+evolves in response to actions. Formally, it defines the conditional
+distribution $p(s_{t+1} \mid s_t, a_t)$ over next states given the current
+state and action. In a deterministic world this is a delta function; in
+practice, stochasticity captures factors like sensor noise, wind
+disturbances, or the unpredictable behaviour of other agents. When both
+$\mathcal{S}$ and $\mathcal{A}$ are discrete with sizes $|\mathcal{S}|$
+and $|\mathcal{A}|$, we can represent $\mathcal{T}$ as a three-dimensional
+tensor:
+
+\begin{equation}
+\label{eq:transition_tensor}
+\mathcal{T}_{i,j,k} = p(s_{t+1} = i \mid s_t = j,\, a_t = k)
+\end{equation}
+
+where the slice $\mathcal{T}_{:,j,k}$ forms a probability distribution
+over next states for each state-action pair $(j, k)$.
+
+The \textbf{reward function} $r : \mathcal{S} \times \mathcal{A}
+\rightarrow \mathbb{R}$ assigns a scalar signal to each state-action pair,
+indicating the immediate utility of taking action $a$ in state $s$. The
+agent's goal is to maximize cumulative reward over time, not just immediate
+reward. Reward design is consequently subtle: specifying what we want
+without inadvertently specifying a proxy that the agent can exploit is
+both RL's power and one of its most persistent practical challenges.
+
+The \textbf{discount factor} $\gamma \in (0, 1)$ controls how much the
+agent values future rewards relative to immediate ones. A reward $r$
+received $k$ steps in the future contributes $\gamma^k r$ to the objective.
+Discounting serves two purposes: it ensures the infinite-horizon sum
+converges, and it captures the reasonable preference for sooner rewards
+over later ones.
+
+Finally, a \textbf{policy} $\pi_\theta$ is the agent's decision-making
+function, parameterized by $\theta$ (typically the weights of a neural
+network). A stochastic policy $\pi_\theta(a_t \mid s_t)$ defines a
+probability distribution over actions given the current state; a
+deterministic policy selects a single action. When the agent cannot observe
+the full state but only a partial observation $o_t$ (as in poker, where
+opponents' cards are hidden), the policy maps observations to actions:
+$\pi_\theta(a_t \mid o_t)$.
+
+\textbf{The Markov property.} The system is Markovian if the future is
+independent of the past given the present:
+
+\begin{equation}
+\label{eq:markov}
+p(s_{t+1} \mid s_t, a_t, s_{t-1}, a_{t-1}, \ldots, s_0, a_0)
+= p(s_{t+1} \mid s_t, a_t)
+\end{equation}
+
+This means the current state $s_t$ is a sufficient statistic for the
+future: knowing how we arrived at $s_t$ provides no additional predictive
+value. Consider Monopoly: if you know the current board configuration ---
+who owns what property, how much cash each player holds, where each token
+sits --- the sequence of rolls and trades that produced that configuration
+is irrelevant for predicting what happens next. The Markov property makes
+RL tractable by allowing us to reason about policies that depend only on
+the current state rather than the full history.\footnote{Many practical
+problems appear non-Markovian when the agent observes $o_t$ rather than
+$s_t$. The standard remedy is to augment the state with sufficient history:
+$s_t = (o_t, o_{t-1}, \ldots, o_{t-k})$ for some window $k$. Recurrent
+policies that maintain a hidden state are another common approach.}
+
+\subsection{Trajectories and the RL Objective}
+\label{sec:rl_objective}
+
+A \textbf{trajectory} $\tau$ is a sequence of states and actions generated
+by the agent interacting with the environment:
+
+\begin{equation}
+\label{eq:trajectory}
+\tau = (s_0, a_0, s_1, a_1, \ldots, s_T, a_T)
+\end{equation}
+
+The probability of observing a particular trajectory under policy
+$\pi_\theta$ decomposes via the chain rule and the Markov property into
+alternating policy and transition terms:
+
+\begin{equation}
+\label{eq:traj_prob}
+p_\theta(\tau) = p(s_0) \prod_{t=0}^{T} \pi_\theta(a_t \mid s_t)\,
+p(s_{t+1} \mid s_t, a_t)
+\end{equation}
+
+The product alternates between what the agent controls
+($\pi_\theta(a_t \mid s_t)$, the policy) and what the environment controls
+($p(s_{t+1} \mid s_t, a_t)$, the dynamics). The initial state $p(s_0)$
+is fixed by the environment.
+
+The \textbf{return} $G_t$ is the discounted sum of future rewards from
+step $t$ onward:
+
+\begin{equation}
+\label{eq:return}
+G_t = \sum_{t'=t}^{T} \gamma^{t'-t}\, r(s_{t'}, a_{t'})
+\end{equation}
+
+The objective of RL is to find parameters $\theta^*$ that maximize the
+expected return over trajectories sampled from the agent's own policy:
+
+\begin{equation}
+\label{eq:rl_objective}
+\theta^* = \arg\max_\theta\; J(\theta) = \arg\max_\theta\;
+    \mathbb{E}_{\tau \sim p_\theta(\tau)}\!\left[G_0\right]
+    = \arg\max_\theta\; \mathbb{E}_{\tau \sim p_\theta(\tau)}\!
+    \left[\sum_{t=0}^{T} \gamma^t\, r(s_t, a_t)\right]
+\end{equation}
+
+Since the number of possible trajectories grows exponentially with $T$,
+the expectation cannot be computed in closed form for most problems. In
+practice we estimate it by sampling $N$ trajectories and averaging:
+
+\begin{equation}
+\label{eq:mc_objective}
+J(\theta) \approx \frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T}
+    \gamma^t\, r(s_{i,t}, a_{i,t})
+\end{equation}
+
+For infinite-horizon tasks without a natural endpoint, we seek a
+\textbf{stationary distribution} $\mu(s, a)$ --- the long-run fraction of
+time the agent spends in each state-action pair under $\pi_\theta$. The
+objective becomes the expected reward under this stationary distribution:
+$\theta^* = \arg\max_\theta \mathbb{E}_{(s,a) \sim \mu}[r(s,a)]$.
+
+\subsection{The Structure of an RL Algorithm}
+\label{sec:rl_algo_structure}
+
+Despite the diversity of RL algorithms, virtually all follow the same
+three-step cycle. Figure~\ref{fig:rl_loop} illustrates the agent-environment
+interaction that drives this cycle.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.82\textwidth]{images/rl_loop.png}
+    \caption{The agent-environment interaction loop. At each step the agent
+    observes the current state $s_t$, selects an action $a_t$ according to
+    its policy $\pi_\theta$, and receives a reward $r_t$ and next state
+    $s_{t+1}$ from the environment. This cycle repeats, generating the
+    trajectory data used to update the policy.}
+    \label{fig:rl_loop}
+\end{figure}
+
+
+\textbf{Step 1 --- Generate samples.} Run the current policy $\pi_\theta$
+in the environment to collect trajectory data, recording $(s_t, a_t, r_t,
+s_{t+1})$ tuples. This is the only way to learn about the environment ---
+through direct experience.
+
+\textbf{Step 2 --- Estimate return.} Use the collected samples to assess
+policy performance. The details vary widely: model-based methods fit a
+dynamics model $\hat{p}(s_{t+1} \mid s_t, a_t)$; value-based methods
+estimate a value function $V^\pi(s)$ or $Q^\pi(s, a)$; policy gradient
+methods estimate $\nabla_\theta J(\theta)$ directly from samples; the
+simplest approach is Monte Carlo, summing rewards along each trajectory.
+
+\textbf{Step 3 --- Improve the policy.} Update $\theta$ based on the
+estimates from Step 2, typically via gradient ascent:
+
+\begin{equation}
+\label{eq:policy_update}
+\theta \leftarrow \theta + \alpha\, \nabla_\theta J(\theta)
+\end{equation}
+
+where $\alpha$ is the learning rate. After the update, return to Step 1
+with the new policy $\pi_{\theta_\text{new}}$.
+
+A crucial consequence of this cycle is that the data distribution
+$p_\theta(\tau)$ changes after every policy update. This non-stationarity
+--- the fact that the training distribution is not fixed but depends on the
+current policy --- distinguishes RL from supervised learning and is a
+central source of its instability.
 
 \section{Policy Gradients}
+\label{sec:policy_gradients}
 
 \subsection{The Policy Gradient Objective}
+\label{sec:pg_objective}
 
-\subsubsection{Intuition: What Are We Trying to Optimize?}
-In reinforcement learning, our goal is to find a policy $\pi_\theta$ that maximizes the total reward an agent receives over time. Unlike supervised learning where we have labeled examples, in RL we must learn from experience by trying actions and observing their consequences.
+Our goal is to maximize $J(\theta) = \mathbb{E}_{\tau \sim p_\theta(\tau)}
+[G_0]$ by gradient ascent. To do this we need $\nabla_\theta J(\theta)$,
+which immediately raises a difficulty: the reward function $r(s, a)$ does
+not depend on $\theta$ directly, and may not be differentiable at all
+(many environments return binary rewards). The dependence on $\theta$ is
+entirely through the distribution $p_\theta(\tau)$ over trajectories.
+Computing $\nabla_\theta$ of an expectation whose distribution depends on
+$\theta$ requires a technique called the log-derivative trick.
 
-The \textbf{expected return} $J(\theta)$ represents the average total reward we expect to receive when following policy $\pi_\theta$:
+\subsection{The Log-Derivative Trick}
+\label{sec:log_derivative}
 
-\[ J(\theta) = E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=0}^{T} r(s_t, a_t) \right] \]
+We begin by writing the gradient of the objective as a gradient of an
+integral:
 
-Let's unpack each component:
-\begin{itemize}
-    \item $\theta$ are the parameters of our policy (e.g., neural network weights)
-    \item $\tau = (s_0, a_0, r_0, s_1, a_1, r_1, \dots, s_T, a_T, r_T)$ is a \textbf{trajectory} (or rollout)
-    \item $p_\theta(\tau)$ is the probability distribution over trajectories induced by policy $\pi_\theta$
-    \item $r(s_t, a_t)$ is the reward received at time step $t$
-\end{itemize}
+\begin{equation}
+\label{eq:grad_integral}
+\nabla_\theta J(\theta)
+= \nabla_\theta \int p_\theta(\tau)\, G(\tau)\, d\tau
+= \int \nabla_\theta p_\theta(\tau)\, G(\tau)\, d\tau
+\end{equation}
 
-\textbf{Monte Carlo Approximation:} Since we cannot compute the expectation analytically (there are typically infinitely many possible trajectories), we approximate it by sampling $N$ trajectories:
+where the gradient moves inside the integral under mild regularity
+conditions and $G(\tau) = \sum_t \gamma^t r(s_t, a_t)$ is the trajectory
+return. We now apply the identity:
 
-\[ J(\theta) \approx \frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T} r(s_{i,t}, a_{i,t}) \]
+\begin{equation}
+\label{eq:log_trick_identity}
+\nabla_\theta p_\theta(\tau)
+= p_\theta(\tau)\, \nabla_\theta \log p_\theta(\tau)
+\end{equation}
 
-This is simply the average total reward across our sampled episodes.
+which follows directly from the chain rule applied to $\log p_\theta(\tau)$:
+$\nabla_\theta \log p_\theta(\tau) = \nabla_\theta p_\theta(\tau) /
+p_\theta(\tau)$. Substituting:
 
-\subsection{Direct Policy Differentiation (The Log-Derivative Trick)}
+\begin{equation}
+\label{eq:grad_expectation}
+\nabla_\theta J(\theta)
+= \int p_\theta(\tau)\, \nabla_\theta \log p_\theta(\tau)\, G(\tau)\, d\tau
+= \mathbb{E}_{\tau \sim p_\theta(\tau)}\!\left[
+    \nabla_\theta \log p_\theta(\tau)\, G(\tau) \right]
+\end{equation}
 
-\subsubsection{The Challenge: Differentiating Through Stochasticity}
-To optimize $J(\theta)$ using gradient ascent, we need $\nabla_\theta J(\theta)$. However, we face a fundamental challenge:
+This is the key step: we have converted an intractable gradient of an
+expectation into an expectation of a gradient, which we can estimate by
+sampling trajectories from the current policy.
 
-\begin{enumerate}
-    \item The reward function $r(s,a)$ is often \textbf{non-differentiable} (e.g., +1 or 0 in many games)
-    \item Even when differentiable, $r$ doesn't depend on $\theta$ directly
-    \item The dependency on $\theta$ is through the \textbf{distribution} $p_\theta(\tau)$ over trajectories
-\end{enumerate}
+It remains to compute $\nabla_\theta \log p_\theta(\tau)$. Taking the log
+of Equation~\ref{eq:traj_prob}:
 
-\subsubsection{Trajectory Distribution Decomposition}
-Let's first understand what $p_\theta(\tau)$ means. A trajectory's probability factors as:
+\begin{equation}
+\label{eq:log_traj}
+\log p_\theta(\tau) = \log p(s_0)
+    + \sum_{t=0}^{T} \log \pi_\theta(a_t \mid s_t)
+    + \sum_{t=0}^{T} \log p(s_{t+1} \mid s_t, a_t)
+\end{equation}
 
-\[ p_\theta(\tau) = p(s_0) \prod_{t=0}^{T} \pi_\theta(a_t | s_t) \, p(s_{t+1} | s_t, a_t) \]
+Applying $\nabla_\theta$, the first and last terms vanish because the
+initial state distribution and the environment dynamics do not depend on
+$\theta$. Only the policy terms survive:
 
-where:
-\begin{itemize}
-    \item $p(s_0)$ is the initial state distribution (fixed, independent of $\theta$)
-    \item $\pi_\theta(a_t | s_t)$ is our policy (depends on $\theta$ — this is what we control!)
-    \item $p(s_{t+1} | s_t, a_t)$ is the environment dynamics (fixed, independent of $\theta$)
-\end{itemize}
+\begin{equation}
+\label{eq:log_traj_grad}
+\nabla_\theta \log p_\theta(\tau)
+= \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t)
+\end{equation}
 
-\subsubsection{The Log-Derivative Trick (Detailed Derivation)}
-We want to compute:
-\[ \nabla_\theta J(\theta) = \nabla_\theta E_{\tau \sim p_\theta(\tau)} [r(\tau)] \]
+This is a remarkable simplification: even though the trajectory
+distribution interleaves policy choices with complex environment dynamics,
+the gradient depends only on the policy. We do not need to know or
+differentiate through the environment dynamics at all.
 
-where $r(\tau) = \sum_{t=0}^{T} r(s_t, a_t)$ is the total reward of trajectory $\tau$.
+Substituting back into Equation~\ref{eq:grad_expectation}:
 
-\textbf{Step 1: Write expectation as an integral}
-\[ \nabla_\theta J(\theta) = \nabla_\theta \int p_\theta(\tau) \, r(\tau) \, d\tau \]
+\begin{equation}
+\label{eq:policy_gradient}
+\nabla_\theta J(\theta)
+= \mathbb{E}_{\tau \sim p_\theta(\tau)}\!\left[
+    \left(\sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t)\right)
+    G(\tau) \right]
+\end{equation}
 
-\textbf{Step 2: Move gradient inside the integral}
-(Valid under mild regularity conditions)
-\[ = \int \nabla_\theta p_\theta(\tau) \, r(\tau) \, d\tau \]
+The Monte Carlo estimate from $N$ sampled trajectories is:
 
-\textbf{Step 3: Apply the log-derivative trick}
-We use the identity: $\nabla_\theta p_\theta(\tau) = p_\theta(\tau) \nabla_\theta \log p_\theta(\tau)$
+\begin{equation}
+\label{eq:pg_mc}
+\nabla_\theta J(\theta) \approx \frac{1}{N} \sum_{i=1}^{N}
+    \left(\sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_{i,t} \mid s_{i,t})
+    \right) G(\tau^i)
+\end{equation}
 
-\textit{Why does this work?} By the chain rule:
-\[ \nabla_\theta \log p_\theta(\tau) = \frac{1}{p_\theta(\tau)} \nabla_\theta p_\theta(\tau) \]
-\[ \Rightarrow \nabla_\theta p_\theta(\tau) = p_\theta(\tau) \nabla_\theta \log p_\theta(\tau) \]
+The interpretation is direct: $\nabla_\theta \log \pi_\theta(a_t \mid s_t)$
+points in the direction that increases the probability of action $a_t$,
+and $G(\tau)$ scales that direction by how good the trajectory was.
+Good trajectories push parameters toward the actions that produced them;
+bad trajectories push parameters away.
 
-Substituting:
-\[ \nabla_\theta J(\theta) = \int p_\theta(\tau) \nabla_\theta \log p_\theta(\tau) \, r(\tau) \, d\tau \]
+\subsection{REINFORCE}
+\label{sec:reinforce}
 
-\textbf{Step 4: Recognize this as an expectation}
-\[ = E_{\tau \sim p_\theta(\tau)} [\nabla_\theta \log p_\theta(\tau) \, r(\tau)] \]
+REINFORCE~\cite{williams1992simple} is the simplest instantiation of the
+policy gradient. It uses the \emph{reward-to-go} from each time step rather
+than the full trajectory return, exploiting the fact that actions at time
+$t$ cannot have caused rewards before time $t$:
 
-\textbf{Why is this useful?} We've transformed the problem into an expectation that we can estimate with samples! We don't need to know $p_\theta(\tau)$ explicitly—we just sample trajectories from it.
+\begin{equation}
+\label{eq:reinforce_gradient}
+\nabla_\theta J(\theta) \approx \frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T}
+    \nabla_\theta \log \pi_\theta(a_{i,t} \mid s_{i,t})\, G_{i,t}
+\end{equation}
 
-\subsubsection{Simplifying the Log-Probability Gradient}
-Now let's compute $\nabla_\theta \log p_\theta(\tau)$. Taking the logarithm of the trajectory distribution:
+where $G_{i,t} = \sum_{t'=t}^{T} \gamma^{t'-t} r(s_{i,t'}, a_{i,t'})$
+is the discounted return from step $t$ in trajectory $i$. Using
+reward-to-go rather than the full return reduces the variance of the
+gradient estimate without introducing bias, because rewards prior to time
+$t$ are independent of the action $a_t$ and therefore their expectation
+contributes zero to the gradient.
 
-\[ \log p_\theta(\tau) = \log p(s_0) + \sum_{t=0}^{T} \log \pi_\theta(a_t | s_t) + \sum_{t=0}^{T} \log p(s_{t+1} | s_t, a_t) \]
+The REINFORCE algorithm is then: initialize $\theta$; repeatedly sample
+$N$ trajectories under $\pi_\theta$; compute reward-to-go $G_{i,t}$ for
+each step; estimate the gradient via Equation~\ref{eq:reinforce_gradient};
+and update $\theta \leftarrow \theta + \alpha\, \nabla_\theta J(\theta)$.
 
-\textbf{Step 1: Apply gradient operator}
-\[ \nabla_\theta \log p_\theta(\tau) = \nabla_\theta \log p(s_0) + \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t | s_t) + \sum_{t=0}^{T} \nabla_\theta \log p(s_{t+1} | s_t, a_t) \]
+\textbf{The pseudo-loss construction.} Automatic differentiation frameworks
+are designed to minimize a scalar loss, not to implement custom gradient
+formulas directly. To use them for REINFORCE, we construct a
+\emph{pseudo-loss} $\tilde{L}(\theta)$ whose gradient with respect to
+$\theta$ equals the negative policy gradient.
 
-\textbf{Step 2: Terms independent of $\theta$ vanish}
-\begin{itemize}
-    \item $\nabla_\theta \log p(s_0) = 0$ (initial state doesn't depend on policy)
-    \item $\nabla_\theta \log p(s_{t+1} | s_t, a_t) = 0$ (environment dynamics don't depend on policy)
-\end{itemize}
+Recall the cross-entropy loss in multi-class classification with classes
+$\{1, \ldots, K\}$:
+\begin{equation}
+\label{eq:cross_entropy}
+L_{\text{CE}} = -\sum_{k=1}^{K} y_k \log \hat{y}_k = -\log \hat{y}_{\text{true}}
+\end{equation}
+where $y_k$ is the one-hot true label and $\hat{y}_k = \pi_\theta(k \mid s)$
+are the predicted action probabilities. The policy gradient analogy is
+direct: treat the \emph{sampled action} $a_{i,t}$ as the true label, treat
+the policy $\pi_\theta(a_{i,t} \mid s_{i,t})$ as the predicted probability,
+and weight each term by the return $G_{i,t}$ rather than uniformly. This
+gives the pseudo-loss:
 
-\textbf{Step 3: We're left with only policy terms}
-\[ \nabla_\theta \log p_\theta(\tau) = \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t | s_t) \]
+\begin{equation}
+\label{eq:pseudo_loss}
+\tilde{L}(\theta) = -\frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T}
+    G_{i,t}\, \log \pi_\theta(a_{i,t} \mid s_{i,t})
+\end{equation}
 
-\textbf{This is remarkable!} Even though the trajectory distribution includes complex environment dynamics, the gradient only depends on our policy. We don't need to know or differentiate through the environment!
+To verify that minimizing $\tilde{L}$ is equivalent to maximizing $J$,
+we compute the gradient of $\tilde{L}$ step by step.
 
-\subsubsection{Final Policy Gradient Formula}
-Putting it all together:
+\textbf{Step 1: Apply the gradient operator.}
+\begin{align}
+\nabla_\theta \tilde{L}(\theta)
+&= -\frac{1}{N} \sum_{i,t} G_{i,t}\,
+    \nabla_\theta \log \pi_\theta(a_{i,t} \mid s_{i,t})
+\label{eq:pseudo_loss_grad_step1}
+\end{align}
 
-\[ \nabla_\theta J(\theta) = E_{\tau \sim p_\theta(\tau)} \left[ \left( \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t | s_t) \right) \left( \sum_{t=0}^{T} r(s_t, a_t) \right) \right] \]
+\textbf{Step 2: Expand the log-gradient using the chain rule.}
+\begin{align}
+\nabla_\theta \log \pi_\theta(a_{i,t} \mid s_{i,t})
+&= \frac{\nabla_\theta \pi_\theta(a_{i,t} \mid s_{i,t})}
+        {\pi_\theta(a_{i,t} \mid s_{i,t})}
+\label{eq:pseudo_loss_grad_step2}
+\end{align}
 
-\textbf{Monte Carlo Estimate:}
-\[ \nabla_\theta J(\theta) \approx \frac{1}{N} \sum_{i=1}^{N} \left( \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_{i,t} | s_{i,t}) \right) \left( \sum_{t=0}^{T} r(s_{i,t}, a_{i,t}) \right) \]
+Substituting back:
+\begin{align}
+\nabla_\theta \tilde{L}(\theta)
+&= -\frac{1}{N} \sum_{i,t} G_{i,t}\,
+    \nabla_\theta \log \pi_\theta(a_{i,t} \mid s_{i,t})
+\label{eq:pseudo_loss_grad_step3}
+\end{align}
 
-\textbf{Intuitive Interpretation:} 
-\begin{itemize}
-    \item $\nabla_\theta \log \pi_\theta(a_t | s_t)$ points in the direction that increases the probability of action $a_t$
-    \item $\sum_{t} r(s_t, a_t)$ weights this direction by how good the trajectory was
-    \item Good trajectories → push parameters to make those actions more likely
-    \item Bad trajectories → push parameters to make those actions less likely
-\end{itemize}
+\textbf{Step 3: Compare with the policy gradient.}
 
-\subsection{The REINFORCE Algorithm}
+From Equation~\ref{eq:reinforce_gradient}:
+\begin{equation}
+\nabla_\theta J(\theta) \approx \frac{1}{N} \sum_{i,t}
+    G_{i,t}\, \nabla_\theta \log \pi_\theta(a_{i,t} \mid s_{i,t})
+\end{equation}
 
-\subsubsection{Algorithm Overview}
-REINFORCE (REward Increment = Nonnegative Factor × Offset Reinforcement × Characteristic Eligibility) is the simplest and most fundamental policy gradient algorithm, introduced by Williams (1992).
+Comparing the two expressions:
+\begin{equation}
+\label{eq:pseudo_loss_relation}
+\nabla_\theta \tilde{L}(\theta) = -\nabla_\theta J(\theta)
+\end{equation}
 
-\subsubsection{Detailed Algorithm Steps}
+Since an optimizer performing gradient descent updates
+$\theta \leftarrow \theta - \alpha\, \nabla_\theta \tilde{L}(\theta)$,
+substituting Equation~\ref{eq:pseudo_loss_relation} gives:
+\begin{equation}
+\label{eq:pseudo_loss_ascent}
+\theta \leftarrow \theta - \alpha\bigl(-\nabla_\theta J(\theta)\bigr)
+= \theta + \alpha\, \nabla_\theta J(\theta)
+\end{equation}
 
-\begin{enumerate}
-    \item \textbf{Initialize:} Policy parameters $\theta$ randomly
-    
-    \item \textbf{For each training iteration:}
-    \begin{enumerate}
-        \item \textbf{Sample Trajectories:} Run policy $\pi_\theta$ in the environment to collect $N$ complete episodes/trajectories $\{\tau^1, \tau^2, \dots, \tau^N\}$
-        
-        \item \textbf{Compute Returns:} For each trajectory $\tau^i$ and each time step $t$, compute:
-        \[ R_{i,t} = \sum_{t'=t}^{T} \gamma^{t'-t} r(s_{i,t'}, a_{i,t'}) \]
-        where $\gamma \in [0,1]$ is the discount factor
-        
-        \item \textbf{Estimate Gradient:} 
-        \[ \nabla_\theta J(\theta) \approx \frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_{i,t} | s_{i,t}) \, R_{i,t} \]
-        
-        \item \textbf{Update Parameters:} Gradient ascent step
-        \[ \theta \leftarrow \theta + \alpha \nabla_\theta J(\theta) \]
-        where $\alpha$ is the learning rate
-    \end{enumerate}
-    
-    \item \textbf{Repeat} until convergence or maximum iterations reached
-\end{enumerate}
+which is exactly gradient \emph{ascent} on $J(\theta)$. Minimizing
+the pseudo-loss with a standard optimizer therefore maximizes expected
+return, with no modification to the optimizer required.
 
-\subsubsection{Why This Works: The Credit Assignment Problem}
-A key insight is that we use $R_{i,t}$ (reward-to-go from time $t$) rather than the total trajectory reward. This incorporates \textbf{causality}: 
-\begin{itemize}
-    \item Actions at time $t$ can only affect rewards at time $t$ and later
-    \item They cannot affect past rewards
-    \item Using reward-to-go reduces variance in our gradient estimate
-\end{itemize}
-
-\subsection{The ``Pseudo-Loss'' and Automatic Differentiation}
-
-\subsubsection{The Challenge with Modern Deep Learning Frameworks}
-Machine-learning frameworks are typically designed for \textbf{supervised learning}, where:
-\begin{itemize}
-    \item We have a loss function $L(\theta)$ to minimize
-    \item We compute gradients $\nabla_\theta L$
-    \item The optimizer updates: $\theta \leftarrow \theta - \alpha \nabla_\theta L$
-\end{itemize}
-
-But in policy gradients:
-\begin{itemize}
-    \item We want to \textbf{maximize} expected reward, not minimize loss
-    \item The gradient formula $\nabla_\theta \log \pi_\theta(a|s) \cdot R$ doesn't naturally fit the supervised learning paradigm
-    \item Actions are \textbf{sampled}, not given as labels
-\end{itemize}
-
-\subsubsection{The Solution: Constructing a Pseudo-Loss}
-We construct a surrogate ``loss'' function whose gradient equals the policy gradient (up to a sign).
-
-\textbf{Recall Cross-Entropy Loss:} In multi-class classification with classes $\{1, 2, \dots, K\}$:
-\[ L_{CE} = -\sum_{k=1}^{K} y_k \log \hat{y}_k = -\log \hat{y}_{\text{true}} \]
-where $y_k$ is the one-hot encoded true label and $\hat{y}_k = \pi(k)$ are predicted probabilities.
-
-\textbf{Policy Gradient Analogy:}
-\begin{itemize}
-    \item Treat the \textbf{sampled action} $a_t$ as the ``true label''
-    \item The policy $\pi_\theta(a_t | s_t)$ provides action probabilities (like classifier outputs)
-    \item Weight the loss by the return $R_t$ instead of using uniform weighting
-\end{itemize}
-
-\textbf{The Pseudo-Loss:}
-\[ \tilde{L}(\theta) = -\frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T} R_{i,t} \log \pi_\theta(a_{i,t} | s_{i,t}) \]
-
-\subsubsection{Why This Works: Gradient Analysis}
-
-\textbf{Step 1: Compute the gradient of pseudo-loss}
-\begin{align*}
-\nabla_\theta \tilde{L}(\theta) &= -\frac{1}{N} \sum_{i,t} R_{i,t} \nabla_\theta \log \pi_\theta(a_{i,t} | s_{i,t}) \\
-&= -\frac{1}{N} \sum_{i,t} R_{i,t} \cdot \frac{\nabla_\theta \pi_\theta(a_{i,t} | s_{i,t})}{\pi_\theta(a_{i,t} | s_{i,t})} \\
-&= -\frac{1}{N} \sum_{i,t} R_{i,t} \nabla_\theta \log \pi_\theta(a_{i,t} | s_{i,t})
-\end{align*}
-
-\textbf{Step 2: Compare with policy gradient}
-Our policy gradient is:
-\[ \nabla_\theta J(\theta) \approx \frac{1}{N} \sum_{i,t} R_{i,t} \nabla_\theta \log \pi_\theta(a_{i,t} | s_{i,t}) \]
-
-\textbf{Step 3: Observe the relationship}
-\[ \nabla_\theta \tilde{L}(\theta) = -\nabla_\theta J(\theta) \]
-
-Since optimizers \textbf{minimize} loss by updating $\theta \leftarrow \theta - \alpha \nabla_\theta \tilde{L}$, we get:
-\[ \theta \leftarrow \theta - \alpha \left( -\nabla_\theta J(\theta) \right) = \theta + \alpha \nabla_\theta J(\theta) \]
-
-This is exactly gradient \textbf{ascent} on $J(\theta)$!
-
-\subsection{Implementation Insights}
-
-When implementing these algorithms, several practical considerations are critical:
-
-\textbf{1. Handling Action Distributions:}
-A policy network outputs unnormalized logits. We convert these to a probability distribution (often using a Softmax in discrete cases). It is crucial that the policy is \emph{stochastic} during training. If we simply took the action with the highest probability ($a = \arg\max_a \pi_\theta(a|s)$), we would never explore the environment, and the discrete argmax operation is non-differentiable. By sampling from the distribution, we enable exploration and differentiability.
-
-\textbf{2. Normalizing Returns:}
-Without normalization, returns might have high variance (e.g., one episode has a return of 100, another has 5). This causes unstable training. Normalizing returns (subtracting the mean and dividing by the standard deviation) makes all episodes contribute similarly to gradients and stabilizes the learning process.
-
-\textbf{3. Detaching Returns:}
-In computational graphs (such as those used in PyTorch or TensorFlow), $R_{i,t}$ must be treated as a \textbf{constant} during backpropagation. The returns depend on rewards from the environment, which are not differentiable with respect to $\theta$. The only dependency on $\theta$ we want to differentiate is through the log-probability of the actions. If we do not detach the returns, the gradients will be incorrect.
+One implementation detail is critical: the returns $G_{i,t}$ must be
+treated as constants during differentiation. They are computed from
+environment rewards, which do not depend on $\theta$, so no gradient
+should flow through them. Automatic differentiation frameworks track
+computation graphs to compute gradients automatically, and if $G_{i,t}$
+were left attached to the graph, the framework would incorrectly attempt
+to differentiate through it. The returns must therefore be detached from
+the computation graph before constructing $\tilde{L}$.
 
 \section{Actor-Critic Algorithms}
+\label{sec:actor_critic}
 
-\subsection{The Variance Problem in Policy Gradients}
+\subsection{The Variance Problem}
+\label{sec:variance_problem}
 
-\subsubsection{Understanding the Problem}
-Recall the policy gradient theorem, which gives us the gradient of the expected return:
-\[ \nabla_\theta J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta} \left[ \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t | s_t) G_t \right] \]
+The REINFORCE gradient estimate in Equation~\ref{eq:reinforce_gradient}
+is unbiased --- its expectation equals the true gradient --- but it
+suffers from high variance. The return $G_t$ is a sum of many random
+variables:
 
-where $G_t = \sum_{t'=t}^{T} \gamma^{t'-t} r_{t'}$ is the discounted return from time $t$.
+\begin{equation}
+G_t = r_t + \gamma r_{t+1} + \gamma^2 r_{t+2} + \cdots + \gamma^{T-t} r_T
+\end{equation}
 
-\textbf{Intuition:} This estimator tells us to increase the probability of actions that led to high returns and decrease the probability of actions that led to low returns. However, there's a fundamental problem lurking here.
+Each term depends on stochastic state transitions, the stochastic policy,
+and potentially stochastic rewards. Assuming rewards have variance
+$\sigma_r^2$ and are independent across steps, the variance of $G_t$ is:
 
-\subsubsection{The Variance Issue: A Detailed Analysis}
+\begin{equation}
+\label{eq:return_variance}
+\mathrm{Var}(G_t) = \sum_{k=0}^{T-t} \gamma^{2k} \sigma_r^2
+    = \sigma_r^2 \cdot \frac{1 - \gamma^{2(T-t+1)}}{1-\gamma^2}
+\end{equation}
 
-The Monte Carlo estimate of the gradient is:
-\[ \hat{g} = \frac{1}{N} \sum_{i=1}^{N} \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t^{(i)} | s_t^{(i)}) G_t^{(i)} \]
+For $\gamma$ close to 1 and long horizons, this variance grows
+approximately linearly with the remaining horizon length. In practice,
+this means two trajectories beginning from the same state with the same
+action can have wildly different returns simply due to randomness in later
+states, and the gradient estimator incorrectly attributes this difference
+to the quality of the initial action.
 
-\textbf{Why is this high variance?}
+The solution is to replace the noisy Monte Carlo return with a learned
+estimate of its expectation --- a \emph{value function} trained on many
+trajectories.
 
-Consider the return $G_t$. It is a sum of many random variables:
-\[ G_t = r_t + \gamma r_{t+1} + \gamma^2 r_{t+2} + \cdots + \gamma^{T-t} r_T \]
+\subsection{Value Functions}
+\label{sec:value_functions}
 
-Each reward $r_{t'}$ depends on:
-\begin{itemize}
-    \item The stochastic state transitions: $s_{t'+1} \sim P(s_{t'+1} | s_{t'}, a_{t'})$
-    \item The stochastic policy: $a_{t'} \sim \pi_\theta(a_{t'} | s_{t'})$
-    \item The potentially stochastic reward function: $r_{t'} \sim R(s_{t'}, a_{t'})$
-\end{itemize}
+The \textbf{state value function} $V^\pi(s)$ is the expected discounted
+return when starting in state $s$ and following policy $\pi$
+thereafter~\cite{sutton2018reinforcement}:
 
-\textbf{Mathematical Analysis of Variance:}
+\begin{equation}
+\label{eq:value_function}
+V^\pi(s) = \mathbb{E}_{\tau \sim \pi}\!\left[G_t \mid s_t = s\right]
+    = \mathbb{E}_{\tau \sim \pi}\!\left[
+    \sum_{t'=t}^{T} \gamma^{t'-t} r(s_{t'}, a_{t'}) \mid s_t = s\right]
+\end{equation}
 
-Let's compute the variance of $G_t$. Assume rewards have variance $\sigma_r^2$ and are independent (the variance of the sum of \textit{independent} random variables is simply the sum of their variances):
-\[ \text{Var}(G_t) = \text{Var}\left(\sum_{k=0}^{T-t} \gamma^k r_{t+k}\right) = \sum_{k=0}^{T-t} \gamma^{2k} \sigma_r^2 = \sigma_r^2 \frac{1 - \gamma^{2(T-t+1)}}{1 - \gamma^2} \]
+$V^\pi(s)$ answers the question: how good is it to be in state $s$, given
+that we will follow $\pi$ from there? It satisfies the \textbf{Bellman
+equation}:
 
-For $\gamma$ close to 1 and long horizons $(T-t)$, this variance grows approximately linearly with the horizon length!
+\begin{equation}
+\label{eq:bellman}
+V^\pi(s) = \mathbb{E}_{a \sim \pi(\cdot \mid s)}\!\left[
+    r(s, a) + \gamma\, \mathbb{E}_{s' \sim p(\cdot \mid s, a)}[V^\pi(s')]
+\right]
+\end{equation}
 
-\textbf{Concrete Example:}
+which expresses the value of a state as the immediate reward plus the
+discounted value of the next state. This recursive structure is central
+to many RL algorithms: it means we can improve our value estimate for $s$
+by bootstrapping from our current estimate of $V^\pi(s')$, without waiting
+for the full return $G_t$.
 
-Imagine two trajectories starting from the same state with the same action:
-\begin{itemize}
-    \item Trajectory 1: $G_t = 1 + 0 + 0 + 1 + 100 = 102$ (got lucky with a rare high reward)
-    \item Trajectory 2: $G_t = 1 + 0 + 0 + 1 + 0 = 2$ (normal trajectory)
-\end{itemize}
+The \textbf{action value function} (Q-function) $Q^\pi(s, a)$ extends this
+to condition on both the state and a specific first action:
 
-Both started identically, but the gradient estimator attributes the entire difference ($\Delta G = 100$) to the action at time $t$, even though the large reward at the end was mostly due to luck in later states. This causes our gradient estimate to wildly fluctuate.
+\begin{equation}
+\label{eq:q_function}
+Q^\pi(s, a) = \mathbb{E}_{\tau \sim \pi}\!\left[G_t \mid s_t = s,
+    a_t = a\right]
+\end{equation}
 
-\subsubsection{The Actor-Critic Solution}
+$Q^\pi(s, a)$ answers: how good is it to take action $a$ in state $s$,
+then follow $\pi$ thereafter? The relationship between $V^\pi$ and $Q^\pi$
+is straightforward: the value of a state is the expected Q-value over
+actions drawn from the policy,
 
-\textbf{Key Insight:} Instead of using a single noisy sample $G_t$ to estimate the value of being in state $s_t$ and taking action $a_t$, we train a function approximator—the \textbf{Critic} $V_\phi(s)$—to estimate the expected value:
-\[ V^\pi(s) = \mathbb{E}_{\tau \sim \pi} \left[ G_t \mid s_t = s \right] \]
+\begin{equation}
+\label{eq:v_q_relation}
+V^\pi(s) = \mathbb{E}_{a \sim \pi(\cdot \mid s)}[Q^\pi(s, a)]
+\end{equation}
 
-The Critic learns from many trajectories and provides a much lower-variance estimate of state values.
+\subsection{The Advantage Function}
+\label{sec:advantage}
 
-\subsection{The Critic and Policy Evaluation}
+The policy gradient in Equation~\ref{eq:policy_gradient} weights
+$\nabla_\theta \log \pi_\theta(a_t \mid s_t)$ by the return $G_t$, which
+reflects both how good the action $a_t$ was and how good the state $s_t$
+was regardless of the action. We want to reinforce actions based only on
+how much better they are than the average action available in that state.
+The \textbf{advantage function} captures exactly this:
 
-\subsubsection{The Policy Evaluation Problem}
+\begin{equation}
+\label{eq:advantage}
+A^\pi(s, a) = Q^\pi(s, a) - V^\pi(s)
+\end{equation}
 
-Given a policy $\pi$, we want to find the value function:
-\[ V^\pi(s) = \mathbb{E}_{\tau \sim \pi} \left[ \sum_{t=0}^{\infty} \gamma^t r_t \mid s_0 = s \right] \]
+$A^\pi(s, a)$ measures how much better action $a$ is compared to the
+expected value of following $\pi$ from state $s$. Figure~\ref{fig:advantage_function}
+illustrates this geometrically for a state with two possible actions.
 
-This satisfies the \textbf{Bellman Equation}:
-\[ V^\pi(s) = \mathbb{E}_{a \sim \pi(\cdot|s)} \left[ r(s,a) + \gamma \mathbb{E}_{s' \sim P(\cdot|s,a)} [V^\pi(s')] \right] \]
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.80\textwidth]{images/advantage_function.png}
+    \caption{The advantage function for a state with two possible actions.
+    $V^\pi(s)$ (dashed line) is the baseline expected value under the
+    policy. $Q^\pi(s, a_1) > V^\pi(s)$ means action $a_1$ is better than
+    average, giving positive advantage $A^\pi(s, a_1) > 0$. $Q^\pi(s, a_2)
+    < V^\pi(s)$ means action $a_2$ is worse than average, giving negative
+    advantage $A^\pi(s, a_2) < 0$. The advantage function has zero mean
+    under the policy by construction.}
+    \label{fig:advantage_function}
+\end{figure}
 
-\textbf{Intuitive Derivation:}
+A key property of the advantage function is that it has zero mean under
+the policy:
 
-Starting from state $s$, the agent:
-\begin{enumerate}
-    \item Takes action $a$ according to $\pi(a|s)$
-    \item Receives immediate reward $r(s,a)$
-    \item Transitions to next state $s'$ with probability $P(s'|s,a)$
-    \item Continues collecting discounted rewards from $s'$ onward
-\end{enumerate}
+\begin{equation}
+\label{eq:advantage_zero_mean}
+\mathbb{E}_{a \sim \pi(\cdot \mid s)}[A^\pi(s, a)]
+= \mathbb{E}_{a \sim \pi}[Q^\pi(s, a)] - V^\pi(s)
+= V^\pi(s) - V^\pi(s) = 0
+\end{equation}
 
-Therefore:
-\begin{align*}
-V^\pi(s) &= \mathbb{E}_{\pi} [r_t + \gamma r_{t+1} + \gamma^2 r_{t+2} + \cdots \mid s_t = s] \\
-&= \mathbb{E}_{\pi} [r_t \mid s_t = s] + \gamma \mathbb{E}_{\pi} [r_{t+1} + \gamma r_{t+2} + \cdots \mid s_t = s] \\
-&= \mathbb{E}_{a \sim \pi} [r(s,a)] + \gamma \mathbb{E}_{a \sim \pi, s' \sim P} [V^\pi(s')]
-\end{align*}
+where the second equality uses Equation~\ref{eq:v_q_relation}. This means
+the advantage is a zero-centred signal: positive for actions better than
+average, negative for actions worse than average, and zero on average.
+This centring is why the advantage reduces variance relative to using $G_t$
+directly.
 
-\subsubsection{Learning the Critic: The Loss Function}
+\textbf{Baseline subtraction.} The advantage can be derived formally as
+the result of subtracting a \emph{baseline} $b(s_t)$ from the return in
+the policy gradient. Any function of the state alone is a valid baseline:
+subtracting it does not bias the gradient estimate. To see why, note that:
 
-We parameterize the value function as $V_\phi(s)$ (a neural network with parameters $\phi$) and minimize:
-\[ \mathcal{L}(\phi) = \mathbb{E}_{s_t \sim \rho^\pi} \left[ \frac{1}{2} \left( V_\phi(s_t) - y_t \right)^2 \right] \]
+\begin{align}
+\mathbb{E}_{a \sim \pi}\!\left[\nabla_\theta \log \pi_\theta(a \mid s)\,
+    b(s)\right]
+&= b(s) \sum_a \pi_\theta(a \mid s)\,
+    \nabla_\theta \log \pi_\theta(a \mid s) \notag \\
+&= b(s) \sum_a \nabla_\theta \pi_\theta(a \mid s) \notag \\
+&= b(s)\, \nabla_\theta \sum_a \pi_\theta(a \mid s) \notag \\
+&= b(s)\, \nabla_\theta 1 = 0
+\label{eq:baseline_proof}
+\end{align}
 
-where $\rho^\pi$ is the state distribution under policy $\pi$, and $y_t$ is our target. We have two choices for the target $y_t$:
+Choosing $b(s_t) = V^\pi(s_t)$ gives the advantage-weighted policy
+gradient:
 
-\paragraph{Monte Carlo Target:} $y_t = G_t = \sum_{t'=t}^T \gamma^{t'-t} r_{t'}$
+\begin{equation}
+\label{eq:advantage_pg}
+\nabla_\theta J(\theta)
+= \mathbb{E}_{\tau \sim p_\theta(\tau)}\!\left[
+    \sum_{t=0}^{T} \nabla_\theta \log \pi_\theta(a_t \mid s_t)\,
+    A^\pi(s_t, a_t) \right]
+\end{equation}
 
-This target has following properties:
-
-\begin{itemize}
-    \item \textbf{Unbiased:} $\mathbb{E}[G_t | s_t] = V^\pi(s_t)$ (by definition of the value function)
-    \item \textbf{High Variance:} As discussed above, $G_t$ is a sum of many random variables
-    \item \textbf{No bootstrapping:} Doesn't depend on our current estimate $V_\phi$
-\end{itemize}
-
-\textbf{When to use:} Episodic tasks with short horizons where we can wait for full trajectories.
-
-\paragraph{Temporal Difference (TD) Target:} $y_t = r_t + \gamma V_\phi(s_{t+1})$
-
-\textbf{Derivation from Bellman Equation:}
-
-The Bellman equation tells us:
-\[ V^\pi(s_t) = r_t + \gamma V^\pi(s_{t+1}) \]
-
-We approximate $V^\pi(s_{t+1}) \approx V_\phi(s_{t+1})$, giving us the TD target.
-
-This target has following properties:
-
-\begin{itemize}
-    \item \textbf{Biased:} Because $V_\phi(s_{t+1}) \neq V^\pi(s_{t+1})$ in general, we have:
-    \[ \mathbb{E}[y_t | s_t] = r_t + \gamma V_\phi(s_{t+1}) \neq V^\pi(s_t) \]
-    The bias decreases as $V_\phi$ improves.
-    
-    \item \textbf{Low Variance:} Only depends on one random reward $r_t$ and one transition, not a long sum. Variance is approximately:
-    \[ \text{Var}(y_t) \approx \sigma_r^2 + \gamma^2 \epsilon_V^2 \]
-    where $\epsilon_V$ is the error in our value estimate.
-    
-    \item \textbf{Bootstrapping:} Uses current estimate to improve itself—can be unstable but enables online learning.
-\end{itemize}
-
-\textbf{Bias-Variance Tradeoff Visualization:}
-
-\begin{center}
-\begin{tabular}{|c|c|c|}
-\hline
-\textbf{Method} & \textbf{Bias} & \textbf{Variance} \\
-\hline
-Monte Carlo & 0 & $\sigma_r^2 \sum_{k=0}^{T-t} \gamma^{2k}$ \\
-TD(0) & $\gamma \cdot \text{error}(V_\phi)$ & $\sigma_r^2$ \\
-\hline
-\end{tabular}
-\end{center}
-
-\paragraph{The Middle Ground: TD($\lambda$) and GAE}
-
-We can interpolate between MC and TD using $n$-step returns:
-\[ y_t^{(n)} = r_t + \gamma r_{t+1} + \cdots + \gamma^{n-1} r_{t+n-1} + \gamma^n V_\phi(s_{t+n}) \]
-
-Or use an exponential average of all $n$-step returns (Generalized Advantage Estimation) \cite{schulman2016}:
-\[ y_t^{\text{GAE}} = \sum_{n=1}^{\infty} (1-\lambda) \lambda^{n-1} y_t^{(n)} \]
-
-where $\lambda \in [0,1]$ controls the bias-variance tradeoff.
+This is the policy gradient theorem: the gradient of the expected return
+equals the expected advantage-weighted log-probability gradient.
 
 \subsection{The Actor-Critic Architecture}
-\label{actor-cirtic-architecture}
+\label{sec:actor-critic-architecture}
 
-\subsubsection{Two Brains, One Goal}
+The actor-critic framework instantiates the advantage-weighted policy
+gradient by maintaining two separate neural networks trained
+simultaneously~\cite{konda2000actor}. Figure~\ref{fig:actor_critic_arch}
+shows the architecture and data flows.
 
-The Actor-Critic framework employs two separate neural networks working in tandem:
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.82\textwidth]{images/actor_critic_arch.png}
+    \caption{The actor-critic architecture. The actor $\pi_\theta$ receives
+    state $s_t$ and produces an action distribution from which $a_t$ is
+    sampled. The critic $V_\phi$ receives $s_t$ and $s_{t+1}$ and produces
+    value estimates used to compute the advantage $\hat{A}_t$. The
+    advantage signal updates the actor; the TD error updates the critic.
+    Both networks are trained simultaneously on trajectories generated by
+    the current actor.}
+    \label{fig:actor_critic_arch}
+\end{figure}
 
-\begin{enumerate}
-    \item \textbf{The Critic ($V_\phi$):} A regression network that learns to predict:
-    \[ V_\phi(s) \approx V^\pi(s) = \mathbb{E}_{\pi} [G_t | s_t = s] \]
-    
-    \textbf{Training Objective:}
-    \[ \min_\phi \mathbb{E}_{s \sim \rho^\pi} \left[ \frac{1}{2} (V_\phi(s) - y)^2 \right] \]
-    
-    \textbf{Gradient:}
-    \[ \nabla_\phi \mathcal{L}(\phi) = \mathbb{E}_{s} \left[ (V_\phi(s) - y) \nabla_\phi V_\phi(s) \right] \]
-    
-    \item \textbf{The Actor ($\pi_\theta$):} A policy network that learns to select actions:
-    \[ a \sim \pi_\theta(a | s) \]
-    
-    \textbf{Training Objective:}
-    \[ \max_\theta J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta} \left[ \sum_t \gamma^t r_t \right] \]
-\end{enumerate}
-
-\textbf{Intuition:} The Critic is like a coach who has watched many games and can tell you how good a position is. The Actor is like the player who uses this feedback to improve their play.
-
-\subsubsection{The Advantage Function: A Key Innovation}
-
-\textbf{Motivation:} Consider the policy gradient:
-\[ \nabla_\theta J(\theta) = \mathbb{E} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) G_t \right] \]
-
-Problem: $G_t$ contains information about both:
-\begin{itemize}
-    \item How good the action $a_t$ was
-    \item How good the state $s_t$ was (regardless of action)
-\end{itemize}
-
-We only want to reinforce actions based on how much \textit{better} they are than average!
-
-\textbf{Mathematical Foundation:}
-
-Define the \textbf{Q-function} (action-value function):
-\[ Q^\pi(s, a) = \mathbb{E}_{\pi} [G_t | s_t = s, a_t = a] \]
-
-And the \textbf{Advantage function}:
-\[ A^\pi(s, a) = Q^\pi(s, a) - V^\pi(s) \]
-
-\textbf{Intuitive Meaning:} 
-\begin{itemize}
-    \item $V^\pi(s)$: How good is state $s$ if we act according to policy $\pi$?
-    \item $Q^\pi(s, a)$: How good is state $s$ if we take action $a$ first, then follow $\pi$?
-    \item $A^\pi(s, a)$: How much better is action $a$ compared to the average action in state $s$?
-\end{itemize}
-
-\textbf{Key Property:} $\mathbb{E}_{a \sim \pi} [A^\pi(s, a)] = 0$
-
-\textbf{Proof:}
-\begin{align*}
-\mathbb{E}_{a \sim \pi} [A^\pi(s, a)] &= \mathbb{E}_{a \sim \pi} [Q^\pi(s, a) - V^\pi(s)] \\
-&= \mathbb{E}_{a \sim \pi} [Q^\pi(s, a)] - V^\pi(s) \\
-&= \mathbb{E}_{a \sim \pi} [\mathbb{E}[G_t | s_t=s, a_t=a]] - V^\pi(s) \\
-&= \mathbb{E}[G_t | s_t=s] - V^\pi(s) \\
-&= V^\pi(s) - V^\pi(s) = 0
-\end{align*}
-
-\subsubsection{Policy Gradient with Advantages}
-
-\textbf{Theorem:} The policy gradient can be written as:
-\[ \nabla_\theta J(\theta) = \mathbb{E}_{s \sim \rho^\pi, a \sim \pi} \left[ \nabla_\theta \log \pi_\theta(a | s) A^\pi(s, a) \right] \]
-
-\textbf{Proof Sketch:}
-
-Start with the standard form:
-\[ \nabla_\theta J(\theta) = \mathbb{E} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) G_t \right] \]
-
-We can subtract a baseline $b(s_t)$ without changing the expectation:
-\[ \nabla_\theta J(\theta) = \mathbb{E} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) (G_t - b(s_t)) \right] \]
-
-\textbf{Why?} Because:
-\begin{align*}
-\mathbb{E}_{a \sim \pi} [\nabla_\theta \log \pi_\theta(a | s) b(s)] &= b(s) \sum_a \pi_\theta(a|s) \nabla_\theta \log \pi_\theta(a | s) \\
-&= b(s) \sum_a \pi_\theta(a|s) \frac{\nabla_\theta \pi_\theta(a | s)}{\pi_\theta(a|s)} \\
-&= b(s) \sum_a \nabla_\theta \pi_\theta(a | s) \\
-&= b(s) \nabla_\theta \sum_a \pi_\theta(a | s) \\
-&= b(s) \nabla_\theta 1 = 0
-\end{align*}
-
-Now, choosing $b(s_t) = V^\pi(s_t)$ gives us:
-\[ \nabla_\theta J(\theta) = \mathbb{E} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) (G_t - V^\pi(s_t)) \right] \]
-
-And since $\mathbb{E}[G_t | s_t, a_t] = Q^\pi(s_t, a_t)$:
-\[ \nabla_\theta J(\theta) = \mathbb{E} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) A^\pi(s_t, a_t) \right] \]
-
-\subsubsection{Practical Advantage Estimation}
-
-We don't know $Q^\pi$ or $A^\pi$ exactly, so we approximate:
-
-\paragraph{1-Step TD Advantage:}
-\[ \hat{A}_t = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t) \]
-
-\textbf{Derivation:} From the Bellman equation, $Q^\pi(s,a) = r + \gamma V^\pi(s')$, so:
-\[ A^\pi(s, a) = Q^\pi(s,a) - V^\pi(s) = r + \gamma V^\pi(s') - V^\pi(s) \]
-
-We approximate $V^\pi \approx V_\phi$.
-
-\paragraph{$n$-Step Advantage:}
-\[ \hat{A}_t^{(n)} = \sum_{k=0}^{n-1} \gamma^k r_{t+k} + \gamma^n V_\phi(s_{t+n}) - V_\phi(s_t) \]
-
-\paragraph{Generalized Advantage Estimation (GAE) \cite{schulman2016}:}
-\[ \hat{A}_t^{\text{GAE}} = \sum_{l=0}^{\infty} (\gamma \lambda)^l \delta_{t+l} \]
-
-where $\delta_t = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t)$ is the TD error.
-
-\textbf{Closed Form:}
-\begin{align*}
-\hat{A}_t^{\text{GAE}} &= \delta_t + \gamma \lambda \delta_{t+1} + (\gamma \lambda)^2 \delta_{t+2} + \cdots \\
-&= (r_t + \gamma V(s_{t+1}) - V(s_t)) \\
-&\quad + \gamma\lambda (r_{t+1} + \gamma V(s_{t+2}) - V(s_{t+1})) \\
-&\quad + (\gamma\lambda)^2 (r_{t+2} + \gamma V(s_{t+3}) - V(s_{t+2})) + \cdots
-\end{align*}
-
-\section{Conclusion}
-
-We have established the foundational framework for RL, including the MDP formalism, policy gradients, and the actor-critic architecture.
-
-\subsubsection{The Actor-Critic Framework}
+The \textbf{critic} $V_\phi(s)$ is a neural network with parameters $\phi$
+that approximates $V^\pi(s)$. It is trained by regression against a target
+$y_t$. Two choices of target are common, representing a fundamental
+bias-variance trade-off:
 
 \begin{center}
-\begin{tabular}{|l|l|}
+\begin{tabular}{lcc}
 \hline
-\textbf{Component} & \textbf{Purpose} \\
+\textbf{Target} & \textbf{Bias} & \textbf{Variance} \\
 \hline
-Actor ($\pi_\theta$) & Learn the policy (what action to take) \\
-Critic ($V_\phi$) & Learn the value function (how good is this state) \\
-Advantage ($A$) & Measure how much better an action is than average \\
+Monte Carlo: $y_t = G_t$ & 0 &
+    $\sigma_r^2 \sum_{k=0}^{T-t} \gamma^{2k}$ \\
+TD: $y_t = r_t + \gamma V_\phi(s_{t+1})$ &
+    $\gamma \cdot \epsilon_V$ & $\approx \sigma_r^2$ \\
 \hline
 \end{tabular}
 \end{center}
 
-\subsubsection{Variance Reduction Techniques}
+The Monte Carlo target is unbiased but inherits the high variance of $G_t$.
+The temporal difference (TD) target has low variance --- it depends on
+only a single reward and one critic evaluation --- but is biased because
+$V_\phi(s_{t+1}) \neq V^\pi(s_{t+1})$ whenever the critic is imperfect.
+The bias shrinks as training progresses and $V_\phi$ improves. The critic
+loss is:
 
-\begin{enumerate}
-    \item \textbf{Baseline Subtraction:} Use $G_t - V(s_t)$ instead of $G_t$
-    \item \textbf{Bootstrapping:} Use $r + \gamma V(s')$ instead of full returns
-    \item \textbf{GAE:} Exponentially weighted average of n-step advantages \cite{schulman2016}
-\end{enumerate}
+\begin{equation}
+\label{eq:critic_loss}
+\mathcal{L}(\phi) = \mathbb{E}_{s_t \sim \rho^\pi}\!\left[
+    \tfrac{1}{2}\left(V_\phi(s_t) - y_t\right)^2 \right]
+\end{equation}
 
-Understanding these components—policy optimization, value estimation, and variance reduction—is essential for mastering modern Reinforcement Learning. In the next chapter, we apply these foundations to understand Reinforcement Learning from Human Feedback (RLHF) for generative AI models.
+where $\rho^\pi$ is the state visitation distribution under the current
+policy.
+
+The \textbf{actor} $\pi_\theta$ is updated using the advantage-weighted
+policy gradient, Equation~\ref{eq:advantage_pg}, with the true advantage
+$A^\pi(s_t, a_t)$ replaced by an estimate $\hat{A}_t$ computed from the
+critic. The 1-step TD advantage estimate is:
+
+\begin{equation}
+\label{eq:td_advantage}
+\hat{A}_t = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t)
+\end{equation}
+
+This follows directly from the Bellman equation: $Q^\pi(s, a) = r +
+\gamma V^\pi(s')$, so $A^\pi(s, a) = Q^\pi(s,a) - V^\pi(s) = r + \gamma
+V^\pi(s') - V^\pi(s)$, approximated by substituting $V_\phi$ for $V^\pi$.
+
+\subsection{Generalized Advantage Estimation}
+\label{sec:gae}
+
+The 1-step TD advantage in Equation~\ref{eq:td_advantage} is low-variance
+but relies heavily on the accuracy of $V_\phi$. A Monte Carlo advantage
+estimate $\hat{A}_t = G_t - V_\phi(s_t)$ is unbiased but high-variance.
+Generalized Advantage Estimation (GAE)~\cite{schulman2016high} interpolates
+between these extremes using an exponentially weighted sum of $n$-step TD
+errors.
+
+Define the 1-step TD error $\delta_t = r_t + \gamma V_\phi(s_{t+1}) -
+V_\phi(s_t)$. The GAE estimate is:
+
+\begin{equation}
+\label{eq:gae}
+\hat{A}_t^{\text{GAE}} = \sum_{l=0}^{\infty} (\gamma\lambda)^l \delta_{t+l}
+\end{equation}
+
+where $\lambda \in [0, 1]$ controls the bias-variance trade-off. Setting
+$\lambda = 0$ recovers the 1-step TD advantage; setting $\lambda = 1$
+recovers the full Monte Carlo advantage minus the baseline. The closed-form
+expansion makes the structure transparent:
+
+\begin{align}
+\hat{A}_t^{\text{GAE}}
+&= \delta_t
+ + \gamma\lambda\, \delta_{t+1}
+ + (\gamma\lambda)^2 \delta_{t+2} + \cdots \notag \\
+&= \bigl(r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t)\bigr) \notag \\
+&\quad + \gamma\lambda\bigl(r_{t+1} + \gamma V_\phi(s_{t+2})
+    - V_\phi(s_{t+1})\bigr) \notag \\
+&\quad + (\gamma\lambda)^2\bigl(r_{t+2} + \gamma V_\phi(s_{t+3})
+    - V_\phi(s_{t+2})\bigr) + \cdots
+\label{eq:gae_expanded}
+\end{align}
+
+Each term is a TD error at a different future step, discounted by
+$(\gamma\lambda)^l$. For small $\lambda$, the estimate is dominated by
+near-term TD errors and is low-variance but reliant on $V_\phi$. For
+$\lambda$ near 1, all future steps contribute nearly equally, approaching
+the Monte Carlo return. GAE is widely used in modern policy gradient
+algorithms because it provides a principled way to tune this trade-off as
+a single scalar hyperparameter.
+
+\section{Conclusion}
+\label{sec:rl_conclusion}
+
+This chapter has developed the three ideas that underpin modern deep RL.
+The MDP provides the formal language: states, actions, transitions, rewards,
+and discount factor define the problem; the policy parameterized by $\theta$
+defines the agent; and the objective is to maximize expected discounted
+return. The policy gradient theorem provides the optimization method: the
+gradient of the objective with respect to $\theta$ can be estimated from
+sampled trajectories without differentiating through the environment,
+because environment dynamics cancel in $\nabla_\theta \log p_\theta(\tau)$.
+And the actor-critic framework provides the variance-reduction architecture:
+a learned critic $V_\phi$ estimates the value baseline, allowing the actor
+to be updated on advantage signals rather than raw returns, substantially
+stabilizing training.
+
+These three ideas compose. REINFORCE is policy gradient without a critic.
+The vanilla actor-critic uses a 1-step TD critic. GAE interpolates between
+them. Modern algorithms like PPO and variants build further on this
+foundation with clipped objectives and multiple epochs of mini-batch
+updates --- all of which will be familiar once the foundations here are
+understood.
+
+Chapter~\ref{ch:rlhf} applies this framework directly to the problem of
+aligning language models with human preferences. The reward signal there
+is not a handcrafted function but a learned \emph{reward model} trained
+on human comparisons, and the policy being optimized is a language model
+with billions of parameters. The actor-critic architecture, the advantage
+function, and the policy gradient theorem carry over unchanged; what
+changes is the scale and the source of the reward signal.
+
 
 \chapter{Reinforcement Learning from Human Feedback}
 \label{ch:rlhf}
@@ -6931,7 +6920,7 @@ In summary: PPO limits the incentive to change the policy in the \textit{benefic
 
 \subsection{Advantages: Measuring "How Good Was This Action?"}
 
-The advantage function $A_t$ quantifies whether an action was better or worse than expected. Recall from \ref{actor-cirtic-architecture}, the Advantage Function is given by:
+The advantage function $A_t$ quantifies whether an action was better or worse than expected. Recall from Section~\ref{sec:actor-critic-architecture}, the Advantage Function is given by:
 
 \begin{equation}
 A^\pi(s_t, a_t) = Q^\pi(s_t, a_t) - V^\pi(s_t)
@@ -11972,7 +11961,28 @@ Lin, J., Tang, J., Tang, H., Yang, S., Deng, X., and Han, S.
   compression and acceleration.
 \newblock In \emph{Proceedings of Machine Learning and Systems},
   volume~6, pages 87--100, 2024.
-  
+
+\bibitem{williams1992simple}
+Ronald~J. Williams.
+\newblock Simple statistical gradient-following algorithms for connectionist reinforcement learning.
+\newblock {\em Machine Learning}, 8(3):229--256, 1992.
+
+\bibitem{sutton2018reinforcement}
+Richard~S. Sutton and Andrew~G. Barto.
+\newblock {\em Reinforcement learning: An introduction}.
+\newblock MIT press, second edition, 2018.
+
+\bibitem{konda2000actor}
+Vijay~R. Konda and John~N. Tsitsiklis.
+\newblock Actor-critic algorithms.
+\newblock In {\em Advances in Neural Information Processing Systems}, volume 12, pages 1008--1014, 2000.
+
+\bibitem{schulman2016high}
+John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel.
+\newblock High-dimensional continuous control using generalized advantage estimation.
+\newblock In {\em Proceedings of the International Conference on Learning Representations (ICLR)}, 2016.
+
+
 \end{thebibliography}
 
 \end{document}
