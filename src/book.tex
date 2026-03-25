@@ -606,6 +606,7 @@ in full technical detail. By the end of those chapters, every equation
 in this historical overview will have been derived from first principles.
 
 \chapter{Mathematical Foundations for Generative AI}
+\label{ch:minimal-math}
 
 \section{Introduction}
 
@@ -746,7 +747,7 @@ The SoftMax function provides a way to convert any real-valued vector into a val
 Given a real-valued vector $\mathbf{x}$ with $K$ elements, the SoftMax function $\sigma(\mathbf{x})$ produces a probability vector of the same dimension. The $i^{th}$ element is defined as:
 
 \begin{equation}
-\sigma(\mathbf{x})_i = \frac{e^{x_i}}{\sum_{j=0}^{d} e^{x_j}}
+\sigma(\mathbf{x})_i = \frac{e^{x_i}}{\sum_{j=1}^{K} e^{x_j}}
 \end{equation}
 
 where $e \approx 2.71828$ is Euler's number (the base of natural logarithms).
@@ -784,6 +785,7 @@ In a language model, if these represented logits (pre-SoftMax scores) for four p
 \section{Measuring Probability Distributions}
 
 \subsection{KL-Divergence}
+\label{sec:kl-divergence}
 
 The Kullback-Leibler (KL) divergence measures how different one probability distribution is from another. Given two probability vectors $\mathbf{p}$ and $\mathbf{q}$ with $K$ elements, where all elements of $\mathbf{q}$ are positive ($q_i > 0$), the KL-divergence is:
 
@@ -1103,6 +1105,7 @@ The true answer is $8$, so our approximation is excellent.
 In neural networks, the chain rule allows gradients to flow backward through layers. If layer 2's output depends on layer 1's output, which depends on layer 1's weights, we use the chain rule to compute how the final loss depends on those weights.
 
 \subsection{Scalar Functions of Vectors}
+\label{sec:scalar-vector-function}
 
 A scalar function of a vector $\mathbf{z}$ maps a vector to a single scalar value. Example: the dot product $f(\mathbf{z}) = \mathbf{w}^T \cdot \mathbf{z}$ where $\mathbf{w}^T = [w_1 \; w_2 \; ... \; w_K]$ is a constant row vector.
 
@@ -1152,6 +1155,119 @@ The gradient of scalar function $f(\mathbf{A})$ with respect to matrix $\mathbf{
 Each element $\frac{\partial f}{\partial A_{ij}}$ indicates how the function changes when that specific weight changes, computed using the same numerical approximation method.
 
 In training neural networks, we compute gradients of the loss with respect to all weight matrices, then update each weight by moving slightly in the negative gradient direction. This gradient descent process iteratively improves the model's performance.
+
+\section{The Method of Lagrange Multipliers}
+\label{sec:lagrange-multipliers}
+
+Up to this point, we have discussed gradients in the context of \textbf{unconstrained optimization}—finding the best parameters by simply following the gradient "downhill." However, in many Generative AI applications, we must find the best parameters while satisfying specific constraints. For this, we need the method of Lagrange Multipliers, which we discuss in this section. 
+
+Let us first understand the intuition behind the method. Suppose we want to find the minimum value of a scalar function of a vector (Section~\ref{sec:scalar-vector-function}) $f(\mathbf{x})$ subject to a hard constraint $g(\mathbf{x}) = c$. We cannot simply find where the gradient of $f(\mathbf{x})$ is zero (the unconstrained minimum), because that optimal point might lie somewhere forbidden, outside the region defined by our constraint.
+
+To solve this, we must think geometrically.
+
+\begin{figure}[htbp]
+    \centering
+     \includegraphics[width=0.7\textwidth]{images/level_curves_gradient.png}
+    \caption{Visualizing a scalar function $f$ using level curves. Each curve connects points of equal value. The gradient vectors $\nabla f$ (arrows) always point in the direction of steepest ascent (and $-\nabla f$ in the direction of steepest descent) and are everywhere perpendicular to the level curves.}
+    \label{fig:level_curves_gradients}
+\end{figure}
+
+\textbf{Step 1: The Landscape (Level Curves)}
+Imagine $f(\mathbf{x})$ represents the altitude of a terrain. We can visualize this terrain using \textbf{level curves} (or contour lines). A level curve (Figure~\ref{fig:level_curves_gradients}) is a line connecting all points with the same height. If you walk along a level curve, your elevation does not change.
+
+\textbf{Step 2: The Path (The Constraint)}
+The constraint equation $g(\mathbf{x}) = c$ (Figure~\ref{fig:lagrange-multipliers-geometry}) defines a specific path through this terrain. We are forced to walk only along this path. Imagine our goal is to find the lowest point (point $\mathbf{x}$ where the $f(\mathbf{x})$ value is minimum) that lies on this specific path.
+
+\textbf{Step 3: The "Kissing" Condition}
+Imagine walking along the path $g(\mathbf{x})=c$.
+\begin{itemize}
+    \item If the path crosses a level curve of $f$, you are moving from a higher elevation to a lower one. This means you have not reached the minimum yet; you can keep walking in that direction to lower your elevation.
+    \item You stop lowering your elevation only when the path stops crossing level curves and instead runs \textit{along} one.
+\end{itemize}
+This occurs exactly where the constraint curve $g(\mathbf{x})=c$ just touches—or \textbf{"kisses"}—a level curve of $f(\mathbf{x})$. At this precise point of tangency, the path and the level curve share a \textbf{common tangent line}.
+
+\textbf{Step 4: From Tangents to Gradients}
+How do we express "common tangents" mathematically? We use gradients.
+Recall a fundamental property of the gradient vector $\nabla f$: \textit{The gradient is always perpendicular (normal) to the level curve.}
+\begin{itemize}
+    \item If the level curve of $f$ and the constraint curve $g$ are tangent (share a line), then their perpendicular vectors (normals) must be parallel.
+    \item Therefore, at the optimal point, the gradient of the cost $\nabla f$ must be parallel to the gradient of the constraint $\nabla g$.
+\end{itemize}
+
+We can express "parallel vectors" by stating that one is a scalar multiple of the other:
+\begin{equation}
+\nabla f(\mathbf{x}) = \lambda \cdot \nabla g(\mathbf{x})
+\end{equation}
+The scalar $\lambda$ is the \textbf{Lagrange Multiplier}. 
+
+\textbf{Step 5: The Lagrangian}
+We can bundle this entire geometric argument into a single equation. We define the Lagrangian $\mathcal{L}$:
+\begin{equation}
+\mathcal{L}(\mathbf{x}, \lambda) = f(\mathbf{x}) - \lambda \cdot (g(\mathbf{x}) - c)
+\end{equation}
+If we take the gradient of $\mathcal{L}$ with respect to $\mathbf{x}$ and set it to the zero vector, we get $\nabla f - \lambda \nabla g = \mathbf{0}$, which recovers our parallel gradient condition. If we differentiate with respect to $\lambda$, we recover the constraint $g(\mathbf{x}) = c$. Thus, minimizing $\mathcal{L}$ solves the constrained optimization problem.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.85\linewidth]{images/lagrange_multipliers.png}
+    \caption{
+    Geometric interpretation of the Method of Lagrange Multipliers.
+    Shown are level curves of the objective function $f(\mathbf{x})$, labeled
+    $f = c_1, c_2, ...$, together
+    with a constraint curve $g(\mathbf{x}) = c$.
+    The constrained minimum $\mathbf{x}^\ast$ occurs at the point where the constraint
+    curve is tangent to a level curve of $f$.
+    At this point, the gradients $\nabla f(\mathbf{x}^\ast)$ and $\nabla g(\mathbf{x}^\ast)$ are
+    collinear along the blue arrow, illustrating the necessary optimality condition
+    $\nabla f(\mathbf{x}^\ast) = \lambda \nabla g(\mathbf{x}^\ast)$.
+    }
+    \label{fig:lagrange-multipliers-geometry}
+\end{figure}
+
+
+\subsection{Worked Example: Minimizing KL Divergence}
+
+To see the Method of Lagrange Multipliers in action, let's solve a fundamental problem in Generative AI: proving that a model's predicted distribution $\mathbf{q}$ is most "accurate" when it perfectly matches the true distribution $\mathbf{p}$.
+
+\textbf{The Problem:} 
+Find the probability vector $\mathbf{q} = [q_1, q_2, \dots, q_K]^T$ that minimizes the KL divergence (Section~\ref{sec:kl-divergence}):
+\begin{equation}
+f(\mathbf{q}) = D_{KL}(\mathbf{p} \| \mathbf{q}) = \sum_{i=1}^{K} p_i \ln \frac{p_i}{q_i}
+\end{equation}
+subject to the constraint that $\mathbf{q}$ must be a valid probability distribution (it must sum to 1):
+\begin{equation}
+g(\mathbf{q}) = \sum_{i=1}^{K} q_i = 1
+\end{equation}
+
+\textbf{1. Formulate the Lagrangian:}
+We combine our objective function $f(\mathbf{q})$ and our constraint $g(\mathbf{q}) = 1$ using the multiplier $\lambda$:
+\begin{equation}
+\mathcal{L}(\mathbf{q}, \lambda) = \sum_{i=1}^{K} (p_i \ln p_i - p_i \ln q_i) + \lambda \left( \sum_{i=1}^{K} q_i - 1 \right)
+\end{equation}
+
+\textbf{2. Find the Stationary Point:}
+We take the partial derivative of the Lagrangian with respect to an individual element $q_i$. Note that in the summation, only the $i^{th}$ term depends on $q_i$:
+\begin{equation}
+\frac{\partial \mathcal{L}}{\partial q_i} = - \frac{p_i}{q_i} + \lambda
+\end{equation}
+Setting this to zero gives the optimality condition:
+\begin{equation}
+\frac{p_i}{q_i} = \lambda \implies q_i = \frac{p_i}{\lambda}
+\end{equation}
+
+\textbf{3. Solve for $\lambda$ using the Constraint:}
+We plug our result back into the original constraint $\sum q_i = 1$:
+\begin{equation}
+\sum_{i=1}^{K} \frac{p_i}{\lambda} = 1 \implies \frac{1}{\lambda} \sum_{i=1}^{K} p_i = 1
+\end{equation}
+Since $\mathbf{p}$ is a probability distribution, we know $\sum p_i = 1$. Therefore, $1/\lambda = 1$, which means $\lambda = 1$.
+
+\textbf{Conclusion:}
+Substituting $\lambda = 1$ back into our equation for $q_i$, we find:
+\begin{equation}
+q_i = p_i
+\end{equation}
+This mathematically proves that to minimize the "distance" (divergence) from a target distribution, the optimal strategy for a generative model is to assign probabilities exactly equal to the target values. While this may seem intuitive, the Method of Lagrange Multipliers provides the rigorous proof that ensures our loss functions, such as Cross-Entropy (\ref{sec:cross-entropy}), actually drive the model toward the correct answer.
 
 \section{Tensors: Generalizing to Higher Dimensions}
 
@@ -6933,9 +7049,42 @@ the penalty, the policy might converge to generating a small set of
 high-scoring responses to every prompt, losing the diversity needed for
 a general-purpose assistant.
 
-There is also a deeper justification. The KL-constrained objective has
-a closed-form optimal solution:
+\paragraph{Deriving the Closed-Form Optimal Policy}
 
+There is a deeper mathematical justification for this objective. We can find the absolute optimal theoretical policy, $\pi^*(y \mid x)$, by treating this as a constrained optimization problem, exactly as we did in Section~\ref{sec:lagrange-multipliers}. 
+
+Instead of optimizing the parameters $\theta$, let us find the optimal probability distribution $\pi$ that maximizes the expected reward minus the KL penalty, subject to the hard constraint that $\pi$ must be a valid probability distribution ($\sum_y \pi(y \mid x) = 1$).
+
+\textbf{1. Formulate the Lagrangian:}
+Using the Method of Lagrange Multipliers, we combine our objective function and our sum-to-one constraint:
+\begin{equation}
+\mathcal{L}(\pi, \lambda) = \sum_y \pi(y \mid x) r(x, y) - \beta \sum_y \pi(y \mid x) \log \frac{\pi(y \mid x)}{\pi^{\text{SFT}}(y \mid x)} + \lambda \left( 1 - \sum_y \pi(y \mid x) \right)
+\end{equation}
+
+\textbf{2. Find the Stationary Point:}
+We take the partial derivative of the Lagrangian with respect to the probability of a specific output sequence, $\pi(y \mid x)$. Using the product rule on the KL term, this yields:
+\begin{equation}
+\frac{\partial \mathcal{L}}{\partial \pi(y \mid x)} = r(x,y) - \beta \left( \log \frac{\pi(y \mid x)}{\pi^{\text{SFT}}(y \mid x)} + 1 \right) - \lambda
+\end{equation}
+Setting this derivative to zero to find the maximum gives us:
+\begin{equation}
+\beta \log \frac{\pi(y \mid x)}{\pi^{\text{SFT}}(y \mid x)} = r(x,y) - \beta - \lambda
+\end{equation}
+Isolating $\pi(y \mid x)$ yields our unnormalized optimal policy:
+\begin{equation}
+\label{eq:unnormalized_optimal}
+\pi(y \mid x) = \pi^{\text{SFT}}(y \mid x) \exp\left( \frac{r(x,y)}{\beta} \right) \exp\left( -1 - \frac{\lambda}{\beta} \right)
+\end{equation}
+
+\textbf{3. Solve for the Constraint Term:}
+Notice that the final term, $\exp(-1 - \lambda/\beta)$, is a constant that does not depend on $y$. To satisfy our constraint that the probabilities must sum to 1, this constant must perfectly normalize the rest of the equation. We define the normalizing constant (or partition function) $Z(x)$ as the sum over all possible responses:
+\begin{equation}
+Z(x) = \sum_y \pi^{\text{SFT}}(y \mid x) \exp\left(\frac{r(x,y)}{\beta}\right)
+\end{equation}
+Therefore, our constant $\exp(-1 - \lambda/\beta)$ must equal $1/Z(x)$. 
+
+\textbf{Conclusion:}
+Substituting this back into Equation~\ref{eq:unnormalized_optimal}, we arrive at the beautiful, closed-form optimal solution:
 \begin{equation}
 \label{eq:kl_optimal}
 \pi^*(y \mid x)
@@ -6943,15 +7092,9 @@ a closed-form optimal solution:
     \exp\!\left(\frac{1}{\beta} r(x, y)\right)
 \end{equation}
 
-where $Z(x) = \sum_y \pi^{\text{SFT}}(y \mid x) \exp(r(x,y)/\beta)$ is
-the partition function. This can be derived by treating the optimization
-as finding the distribution $\pi_\theta$ that maximizes expected reward
-subject to a KL constraint, using Lagrange multipliers. The optimal policy
-is a tilted version of the reference policy, with responses upweighted
-exponentially by their reward. This closed form motivates the DPO approach
-discussed in Section~\ref{sec:dpo}.
+The optimal policy $\pi^*$ is simply the original SFT policy, scaled exponentially by the reward score. We did not derive the closed form to satisfy a theoretical curiosity. In fact, it directly motivates the Direct Preference Optimization (DPO) approach discussed in Section~\ref{sec:dpo}.
 
-\section{Proximal Policy Optimization for RLHF}
+\section{Proximal Policy Optimization (PPO) for RLHF}
 \label{sec:ppo_rlhf}
 
 Policy gradient methods like REINFORCE could in principle optimize the
@@ -8009,83 +8152,13 @@ The kinetic energy functional $\mathcal{E}$ measures the total "cost" of the tra
 Physically, the term $\frac{1}{2} p_t(x) \|u_t(x)\|^2$ represents the kinetic energy density at a specific point $x$ and time $t$. We integrate this over all space and all time.
 
 \subsubsection{Deriving the Optimal Velocity Field}
-To determine the properties of the optimal velocity field, we employ the \textbf{Calculus of Variations}, a field of mathematical analysis that deals with maximizing or minimizing functionals (integrals).
-
-\paragraph{Primer: The Method of Lagrange Multipliers}
-To understand how we derive the optimal velocity field using the Calculus of Variations, we must first master the intuition behind the Method of Lagrange Multipliers.
-
-Suppose we want to find the minimum value of a cost function $f(x)$ (e.g., minimizing energy) subject to a hard constraint $g(x) = c$ (e.g., staying on a specific path). We cannot simply find where the derivative of $f(x)$ is zero (the unconstrained minimum), because that optimal point might lie somewhere forbidden, outside the region defined by our constraint.
-
-To solve this, we must think geometrically.
-
-\begin{figure}[htbp]
-    \centering
-     \includegraphics[width=0.7\textwidth]{images/level_curves_gradient.png}
-    \caption{Visualizing a scalar cost function $f$ using level curves. Each curve connects points of equal value. The gradient vectors $\nabla f$ (arrows) always point in the direction of steepest ascent and are everywhere perpendicular to the level curves.}
-    \label{fig:level_curves_gradients}
-\end{figure}
-
-\textbf{Step 1: The Landscape (Level Curves)}
-Imagine $f(x)$ represents the altitude of a terrain. We can visualize this terrain using \textbf{level curves} (or contour lines). A level curve is a line connecting all points with the same height. If you walk along a level curve, your elevation does not change.
-
-
-\textbf{Step 2: The Path (The Constraint)}
-The constraint equation $g(x) = c$ defines a specific path through this terrain. We are forced to walk only along this path. Our goal is to find the lowest point (point $x$ where $f(x)$ value is minimum) or the highest point (point $x$ where $f(x)$ value is maximum) that lies on this specific path.
-
-\textbf{Step 3: The "Kissing" Condition}
-Imagine walking along the path $g(x)=c$.
-\begin{itemize}
-    \item If the path crosses a level curve of $f$, you are moving from a higher elevation to a lower one (or vice versa). This means you have not reached the minimum yet; you can keep walking in that direction to lower your cost.
-    \item You stop lowering your cost only when the path stops crossing level curves and instead runs \textit{along} one.
-\end{itemize}
-This occurs exactly where the constraint curve $g(x)=c$ just touches—or \textbf{"kisses"}—a level curve of $f(x)$. At this precise point of tangency, the path and the level curve share a \textbf{common tangent line}.
-
-
-\textbf{Step 4: From Tangents to Gradients}
-How do we express "common tangents" mathematically? We use gradients.
-Recall a fundamental property of the gradient vector $\nabla f$: \textit{The gradient is always perpendicular (normal) to the level curve.}
-\begin{itemize}
-    \item If the level curve of $f$ and the constraint curve $g$ are tangent (share a line), then their perpendicular vectors (normals) must be parallel.
-    \item Therefore, at the optimal point, the gradient of the cost $\nabla f$ must be parallel to the gradient of the constraint $\nabla g$.
-\end{itemize}
-
-We can express "parallel vectors" by stating that one is a scalar multiple of the other:
-\begin{equation}
-\nabla f(x) = \lambda \cdot \nabla g(x)
-\end{equation}
-The scalar $\lambda$ is the \textbf{Lagrange Multiplier}. It represents the ratio of the "forces" between the cost and the constraint.
-
-\textbf{Step 5: The Lagrangian}
-We can bundle this entire geometric argument into a single equation. We define the \textbf{Lagrangian} $\mathcal{L}$:
-\begin{equation}
-\mathcal{L}(x, \lambda) = f(x) - \lambda \cdot (g(x) - c)
-\end{equation}
-If we take the derivative of $\mathcal{L}$ with respect to $x$ and set it to zero, we get $\nabla f - \lambda \nabla g = 0$, which recovers our parallel gradient condition. If we differentiate with respect to $\lambda$, we recover the constraint $g(x) = c$. Thus, minimizing $\mathcal{L}$ solves the constrained problem.
-
-\begin{figure}[t]
-    \centering
-    \includegraphics[width=0.85\linewidth]{images/lagrange_multipliers.png}
-    \caption{
-    Geometric interpretation of the Method of Lagrange Multipliers.
-    Shown are level curves of the objective function $f(x)$, labeled
-    $f = c_1, c_2, ...$, together
-    with a constraint curve $g(x) = c$.
-    The constrained minimum $x^\ast$ occurs at the point where the constraint
-    curve is tangent to a level curve of $f$.
-    At this point, the gradients $\nabla f(x^\ast)$ and $\nabla g(x^\ast)$ are
-    collinear along the blue arrow, illustrating the necessary optimality condition
-    $\nabla f(x^\ast) = \lambda \nabla g(x^\ast)$.
-    }
-    \label{fig:lagrange-multipliers-geometry}
-\end{figure}
-\paragraph{Extension to Fields (Calculus of Variations)}
-In our optimal transport problem, we apply this same logic, but we scale it up from finding a single point $x$ to finding entire functions.
+To determine the properties of the optimal velocity field, we extend the Lagrange Multipliers we discussed in Chapter~\ref{ch:minimal-math} to apply to fields.
 
 \textbf{1. From Points to Fields}
-In standard calculus, our variable $x$ is a vector in $\mathbb{R}^d$. In Optimal Transport, our "variables" are the density field $p_t(x)$ and velocity field $u_t(x)$ defined over all space and time. We are optimizing the "shape" of these functions.
+In Section~\ref{sec:lagrange-multipliers}, our variable $x$ is a vector in $\mathbb{R}^d$. In Optimal Transport, our "variables" are the density field $p_t(x)$ and velocity field $u_t(x)$ defined over all space and time. We are optimizing the "shape" of these functions.
 
 \textbf{2. From One Constraint to Infinite Constraints}
-In the simple primer, we had one constraint equation $g(x) = c$. In our flow problem, the constraint is the \textbf{Continuity Equation}:
+In Section~\ref{sec:lagrange-multipliers}, we had one constraint equation $g(x) = c$. In our flow problem, the constraint is the \textbf{Continuity Equation}:
 \begin{equation}
 \frac{\partial p_t(x)}{\partial t} + \nabla \cdot (p_t(x) u_t(x)) = 0
 \end{equation}
