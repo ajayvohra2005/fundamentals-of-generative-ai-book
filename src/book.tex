@@ -8489,7 +8489,7 @@ images unfold on a two-dimensional pixel grid.  In both cases the
 \emph{geometry} of the input is flat: tokens are equally spaced in
 sequence, pixels are equally spaced on a rectangular lattice, and
 Euclidean distance is the natural measure of proximity.
- 
+
 Now we turn to a fundamentally different canvas: the surface of the
 Earth.  The Earth is not flat, and the data we collect about it does
 not live on a Euclidean plane.  Roads curve around hills, distances
@@ -8500,16 +8500,16 @@ centimeter accuracy requires rethinking every element of the pipeline
 we have assembled in previous chapters---from how we represent
 coordinates, to how we tokenize space, to how we fuse sensor
 modalities, to what self-supervised objectives we optimize.
- 
+
 This chapter addresses two related products:
- 
+
 \begin{itemize}
 \item \textbf{Base Maps} are meter-level-accurate topological
   representations of the world---road networks, building footprints,
   terrain elevation, and administrative boundaries.  They answer
   questions like: ``Is there a road here?  Which way does it run?
   How high is this hill?''
- 
+
 \item \textbf{High-Definition (HD) Maps} are centimeter-level-accurate,
   semantically rich representations of the immediate driving
   environment.  They answer questions like: ``Exactly where is the
@@ -8517,16 +8517,16 @@ This chapter addresses two related products:
   Is that white marking a stop line or a crosswalk?  What is the
   posted speed limit for this lane?''
 \end{itemize}
- 
+
 A human driver consults a base map to plan a route from home to the
 airport.  The self-driving software that takes over once the car is
 underway consults an HD map to keep the vehicle centered in its lane
-at 120 km/h~\cite{caesar2020nuscenes,nuplan2023}.  The two products differ in
-resolution by roughly three orders of magnitude, but a
+at 120 km/h~\cite{caesar2020nuscenes,nuplan2023}.  The two products
+differ in resolution by roughly three orders of magnitude, but a
 \emph{Geo-spatial Foundational Model} must span both: it must
 understand a continent's worth of road topology \emph{and} the
 precise 3D shape of a single curb.
- 
+
 Building such a model from sensor data requires fusing two
 complementary modalities.  \textbf{Satellite and camera imagery}
 ($\mathcal{I}_{2D}$) is rich in semantic texture---paint color, shadow
@@ -8536,284 +8536,62 @@ geometry but are sparse in semantic content; a LiDAR return tells you
 \emph{where} a surface is, but not \emph{what} it is.  Together, the
 two modalities complement each other perfectly: imagery supplies the
 ``what,'' LiDAR supplies the ``where and how high.''
- 
-% ------------------------------------------------------------------
-\subsection{Data Representations for Base Maps and HD Maps}
-% ------------------------------------------------------------------
- 
-Before developing the model architecture, it is worth being precise
-about what a Base Map and an HD Map actually \emph{are} as data
-structures.  The two products differ not only in resolution but in
-the fundamental mathematical objects used to represent them.
- 
-\paragraph{Base Map Representation.}
- 
-A Base Map is organized as a collection of \textbf{overlapping
-geometric layers}, each encoding a different category of real-world
-feature.  The three primary layer types are:
- 
-\begin{itemize}
-  \item \textbf{Road network graph.}  The road network is represented
-    as a directed graph $\mathcal{G} = (\mathcal{V}, \mathcal{E})$,
-    where each node $v \in \mathcal{V}$ is a geodetic point (an
-    intersection or road endpoint) and each directed edge
-    $e = (v_i, v_j) \in \mathcal{E}$ is a road segment connecting two
-    nodes.  Every edge carries a set of scalar and categorical
-    attributes: road class (motorway, arterial, residential), number
-    of lanes, speed limit, surface type, and one-way flag.
-    Geometrically, each edge is a \textbf{polyline}---an ordered
-    sequence of 2D geodetic waypoints $\{(\phi_k, \lambda_k)\}_{k=1}^{K}$
-    that traces the center-line of the road between its two endpoint
-    nodes.  A continent-scale base map may contain hundreds of millions
-    of such edges.
- 
-  \item \textbf{Polygon layers.}  Non-linear features---building
-    footprints, land use zones, bodies of water, administrative
-    boundaries---are represented as \textbf{closed polygons} in
-    geodetic coordinates.  Each polygon $\mathcal{P} =
-    \{(\phi_k, \lambda_k)\}_{k=1}^{K}$ (with $(\phi_K, \lambda_K) =
-    (\phi_1, \lambda_1)$) is tagged with a semantic category and
-    optional scalar attributes (building height, land use class).
- 
-  \item \textbf{Elevation raster.}  Terrain height is stored as a
-    \textbf{Digital Elevation Model (DEM)}: a regular grid of scalar
-    elevation values $h(\phi, \lambda)$ sampled at a fixed angular
-    resolution (typically 1 arc-second $\approx$ 30 m at the equator
-    for global products).  The DEM is distinct from the vector layers
-    above---it is a raster, not a graph---and is used to resolve the
-    3D position of road and polygon features above the ellipsoid.
-\end{itemize}
- 
-As a concrete illustration, consider the OpenStreetMap
-(OSM)~\cite{haklay2008openstreetmap} data model, which is widely used
-in research and industry.  OSM represents the world as a set of
-\emph{nodes}, \emph{ways}, and \emph{relations}, each carrying a
-flexible set of key-value \emph{tags} that encode semantic attributes.
-A \textbf{node} is a geodetic point with a unique integer identifier:
 
-\begin{verbatim}
-<node id="271027440" lat="48.8584700" lon="2.2944600">
-  <tag k="name"    v="Eiffel Tower"/>
-  <tag k="tourism" v="attraction"/>
-</node>
-\end{verbatim}
+What makes this fusion problem unusually demanding is that Base Maps
+and HD Maps are not merely different in resolution---they are
+different in kind.  A Base Map encodes topology: which roads connect
+to which intersections, which buildings bound which city blocks.  An
+HD Map encodes geometry: the precise three-dimensional position of
+every lane edge, every painted marking, every sign face.  Both
+representations mix discrete structure with continuous coordinates,
+and both must ultimately be grounded in a single, physically
+consistent model of the Earth's surface.  Before we can design the
+neural architecture that produces these representations, we must
+therefore establish the geometric foundation on which they rest: a
+rigorous treatment of how points on the Earth's curved surface are
+measured, represented, and transformed.
 
-\noindent A \textbf{way} is an ordered sequence of node references
-forming either an open polyline (a road segment) or a closed polygon
-(a building footprint):
-
-\begin{verbatim}
-<way id="5090250">
-  <nd ref="271027440"/>
-  <nd ref="271027441"/>
-  <nd ref="271027442"/>
-  <tag k="highway"  v="motorway"/>
-  <tag k="maxspeed" v="130"/>
-  <tag k="lanes"    v="3"/>
-</way>
-\end{verbatim}
-
-\noindent A \textbf{relation} groups nodes, ways, and other relations
-into a named semantic role --- for example, assembling the individual
-way segments of a motorway into a single named route, or encoding a
-polygon with holes (an outer boundary way and one or more inner
-boundary ways):
-
-\begin{verbatim}
-<relation id="12345">
-  <member type="way" ref="5090250" role="outer"/>
-  <member type="way" ref="5090251" role="inner"/>
-  <tag k="type"    v="multipolygon"/>
-  <tag k="landuse" v="forest"/>
-</relation>
-\end{verbatim}
-
-\noindent The three element types together form a flexible, layered
-graph: nodes provide the geodetic anchor points, ways chain them into
-linear and areal geometry, and relations impose higher-order semantic
-structure.  The GFM must learn to produce output that is equivalent in
-content to this representation --- recovering not only the correct
-geodetic coordinates of each element but also the correct tags and the
-correct graph connectivity among them.
- 
-\paragraph{HD Map Representation.}
- 
-An HD Map is a substantially richer data structure than a Base Map.
-Where a Base Map records the \emph{existence} and \emph{rough shape}
-of a road, an HD Map records the \emph{precise 3D geometry} of every
-lane boundary, road marking, sign, and surface feature, along with
-their complete semantic annotation.  The standard representation
-organizes this information into two interlocking components:
- 
-\begin{itemize}
-  \item \textbf{Geometric primitives layer.}  Every physical feature
-    in the driving environment is stored as a typed geometric object
-    in 3D space (coordinates in the local ENU frame, defined in
-    Section~\ref{sec:enu}):
-    \begin{itemize}
-      \item \emph{Lane boundaries}: 3D polylines
-        $\mathbf{L} = \{(e_k, n_k, u_k)\}_{k=1}^{K}$, sampled at
-        a waypoint spacing of $\leq$10 cm, annotated with boundary
-        type (solid white, dashed yellow, curb, barrier).
-      \item \emph{Road markings}: 3D polygons (stop lines,
-        crosswalk boxes, arrow markings) with a painted-surface
-        semantic tag.
-      \item \emph{Traffic signs and signals}: 3D bounding boxes
-        $\mathbf{B} = (e_c, n_c, u_c, w, h, d, \theta)$ encoding
-        center position, dimensions, and orientation, annotated with
-        sign category and regulatory value (e.g.,
-        \texttt{speed\_limit=80}).
-      \item \emph{Road surface}: a triangulated mesh encoding
-        centimeter-level elevation variation, pothole locations, and
-        surface material category.
-    \end{itemize}
- 
-  \item \textbf{Topology graph (lanelet graph).}  The geometric
-    primitives alone do not tell a vehicle \emph{how to drive}.  A
-    \textbf{lanelet}~\cite{bender2014lanelets} is the fundamental
-    topological unit of an HD Map: it is a short, directed segment of
-    drivable surface bounded on its left and right by two lane boundary
-    polylines.  Formally, a lanelet is a tuple
-    $\ell = (\mathbf{L}_{\text{left}},\, \mathbf{L}_{\text{right}},\,
-    \mathcal{A})$, where $\mathbf{L}_{\text{left}}$ and
-    $\mathbf{L}_{\text{right}}$ are the bounding polylines and
-    $\mathcal{A}$ is a set of regulatory attributes (speed limit,
-    right-of-way, allowed maneuvers).  Lanelets are connected into a
-    directed graph $\mathcal{G}_{\text{HD}} =
-    (\mathcal{L}, \mathcal{E}_{\text{HD}})$, where a directed edge
-    $({\ell}_i, {\ell}_j) \in \mathcal{E}_{\text{HD}}$ encodes that a
-    vehicle may legally proceed from lanelet $\ell_i$ to lanelet
-    $\ell_j$ (a lane-following or lane-change relation).  A full
-    intersection may contain dozens of lanelets and hundreds of edges
-    encoding every permitted turning movement.
-\end{itemize}
- 
-As a concrete illustration, the OpenDRIVE
-standard~\cite{dupuis2010opendrive} represents HD map geometry as a
-hierarchy of \emph{roads}, \emph{lane sections}, and \emph{lanes},
-where each road's center-line is parameterized as a smooth curve
-(clothoid or polynomial spline) and lane boundaries are derived from
-it by lateral offsets.  Regulatory elements (signs, speed limits,
-traffic lights) are attached to lanes via reference positions along
-the center-line parameter.  A truncated example illustrates the
-hierarchy:
-
-\begin{verbatim}
-<road name="A9_North" length="432.7" id="42">
-  <planView>
-    <!-- Center-line: clothoid arc starting at (x=448312.1, y=5413.2) -->
-    <geometry s="0.0" x="448312.1" y="5413.2"
-              hdg="0.314" length="432.7">
-      <spiral curvStart="0.000" curvEnd="0.002"/>
-    </geometry>
-  </planView>
-  <lanes>
-    <laneSection s="0.0">
-      <left>
-        <lane id="1" type="driving" level="false">
-          <width sOffset="0.0" a="3.75"/>   <!-- 3.75 m lane width -->
-        </lane>
-      </left>
-      <center>
-        <lane id="0" type="none"/>          <!-- road center-line -->
-      </center>
-      <right>
-        <lane id="-1" type="driving" level="false">
-          <width sOffset="0.0" a="3.75"/>
-          <speed sOffset="0.0" max="130"/>  <!-- speed limit: 130 km/h -->
-        </lane>
-      </right>
-    </laneSection>
-  </lanes>
-  <signals>
-    <!-- Speed limit sign at 210 m along the road, on the right -->
-    <signal s="210.0" t="-2.1" id="77" name="speed_limit"
-            dynamic="no" orientation="+">
-      <validity fromLane="-1" toLane="-1"/>
-    </signal>
-  </signals>
-</road>
-\end{verbatim}
-
-\noindent Several features of this representation are worth noting.
-The road's geometric shape is not stored as a list of waypoints but
-as a \textbf{compact parametric curve}: a single clothoid arc defined
-by its start position, heading angle (\texttt{hdg}), length, and
-curvature range (\texttt{curvStart}, \texttt{curvEnd}).  Lane
-boundaries are never stored explicitly as 3D polylines; instead, they
-are \emph{derived} from the center-line by applying the lateral
-\texttt{width} offset at every arc-length position $s$ along the
-road.  Regulatory information --- here a 130 km/h speed limit and a
-physical speed-limit sign --- is attached to specific lanes and
-arc-length positions rather than stored as independent spatial
-objects.  The full 3D geometry of any lane boundary at any point
-along the road can be reconstructed on demand by evaluating the
-parametric curve and applying the lateral offset, but it is never
-materialized in the file itself.  The GFM must learn to produce
-output that is equivalent in content to this structured
-representation, either by directly regressing the underlying
-parametric primitives or by autoregressively generating a token
-sequence that encodes them (Section~\ref{sec:vocab}).
- 
-\paragraph{Why Both Representations Challenge a Neural Model.}
- 
-The juxtaposition of Base Map and HD Map representations exposes the
-core difficulty of building a unified geo-spatial foundational model.
-A Base Map graph $\mathcal{G}$ is \emph{topologically rich but
-geometrically coarse}: the graph structure (which intersections
-connect to which roads) is the primary information, and waypoint
-positions are approximate.  An HD Map lanelet graph
-$\mathcal{G}_{\text{HD}}$ is \emph{geometrically precise but
-topologically local}: the centimeter-accurate polylines are the
-primary information, and the graph encodes only the immediately
-drivable neighborhood.
- 
-Both representations mix \textbf{discrete} structure (graph
-connectivity, semantic labels, regulatory categories) with
-\textbf{continuous} geometry (waypoint coordinates, bounding box
-dimensions, surface elevation).  Standard neural architectures
-designed for either pure sequences (language models) or pure grids
-(convolutional networks) handle one or the other well, but not both
-simultaneously and not at the resolution and geographic scale required
-here.  This is the fundamental motivation for the Geo-spatial
-Foundational Model developed in this chapter.
- 
-% ------------------------------------------------------------------
- 
 This chapter develops the full mathematical and architectural framework
 for a Geo-spatial Foundational Model.  We will encounter four
 core technical challenges, each requiring its own principled solution:
- 
+
 \begin{enumerate}
 \item \textbf{Spheroidal geometry.}  The Earth is an oblate spheroid,
   not a flat plane.  We must transform between coordinate systems
   (geodetic, ECEF, ENU)~\cite{nima2000wgs84} to enable globally
   consistent, distortion-free neural computation.
- 
+
 \item \textbf{Spatial tokenization.}  Transformers~\cite{vaswani2017attention}
   consume discrete tokens.  We must discretize the Earth's continuous
   curved surface into approximately equal-area cells~\cite{s2geometry}
   and linearize the result into a 1-D sequence that preserves spatial
   locality~\cite{hilbert1891}.
- 
+
 \item \textbf{Multi-modal fusion.}  Camera images and LiDAR scans must
   be brought into a shared embedding space respecting the laws of
   projective geometry~\cite{hartley2003multiple}, so the model can
   learn that a particular visual texture in imagery implies a
   particular 3D profile in LiDAR.
- 
+
 \item \textbf{Semantic and geometric learning.}  HD maps encode
   discrete semantic labels (lane type, sign category) alongside
   continuous geometry (3D polyline coordinates).  We must design
   self-supervised pre-training objectives~\cite{he2022masked} and
   multi-task output heads that handle both simultaneously.
 \end{enumerate}
- 
+
 We develop each challenge in order, building intuition with analogies
 before grounding every concept in rigorous mathematics---exactly as we
 approached the continuity equation and optimal transport in the Flow
-Models chapter.
- 
+Models chapter.  We begin in Section~\ref{sec:geodetic} by establishing
+the coordinate systems that underpin every subsequent calculation:
+the WGS~84 spheroid, the global ECEF frame, and the vehicle-local
+ENU frame.  Only once those foundations are in place do we turn, in
+Section~\ref{sec:representations}, to the precise data structures
+that Base Maps and HD Maps use to represent the world---structures
+whose full meaning can only be appreciated once the coordinate
+machinery is understood.
+
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=0.95\textwidth]{images/geospatial_overview.png}
@@ -8824,7 +8602,9 @@ Models chapter.
     layers (lane geometry, semantic labels) and Base Map topology.}
   \label{fig:geospatial_overview}
 \end{figure}
+
  
+
 % ------------------------------------------------------------------
 \section{The Geodetic Foundation: Modeling the Spheroid}
 % ------------------------------------------------------------------
@@ -8871,7 +8651,8 @@ is approximately 6,378 km, while its polar radius is approximately
 \end{figure}
  
 \subsection{The WGS 84 Standard}
- 
+\label{sec:geodetic}
+
 The international standard for Earth's shape is the \textbf{World
 Geodetic System 1984 (WGS 84)}~\cite{nima2000wgs84}, the same
 ellipsoid used by GPS satellites.  WGS 84 defines two fundamental
@@ -9264,11 +9045,41 @@ $\mathbf{R}_{\text{sat}} \in SO(3)$ describing how the camera frame is
 oriented relative to ECEF at every instant.  Together,
 $(\mathbf{X}_{\text{sat}}, \mathbf{R}_{\text{sat}})$ constitute the
 satellite's full rigid-body pose.
- 
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=0.92\textwidth]{images/pinhole_camera_intrinsic.png}
+  \caption{The pinhole camera model and the intrinsic matrix $\mathbf{K}$.
+    \emph{(a) Side view.}  A 3D scene point $P$ is projected through
+    the optical center $O$ --- the origin of the camera coordinate
+    frame --- onto the image plane, which lies at a perpendicular
+    distance $f$ (the focal length, in metres) from $O$ along the
+    optical axis (dashed line).  The ray from $P$ through $O$
+    continues until it strikes the image plane at pixel $(u, v)$
+    (blue dot).  The \textbf{principal point} $(c_x, c_y)$ (red dot)
+    is where the optical axis pierces the image plane.
+    \emph{(b) Front-on view of the image plane.}  Pixel coordinates
+    $(u, v)$ measure column (rightward) and row (downward) in integer
+    pixel units from the top-left corner $(0, 0)$.  The principal
+    point lies at the image center; $c_x$ and $c_y$ are its column
+    and row offsets in pixels.  The highlighted blue cell shows the
+    pixel $(u, v)$ where the ray from panel~(a) arrives, at the same
+    vertical position in both panels.  The intrinsic matrix
+    $\mathbf{K}$ encodes all four parameters in pixel units: focal
+    lengths $f_x = f \cdot k_u$ and $f_y = f \cdot k_v$ (where
+    $k_u, k_v$ are the horizontal and vertical pixel densities in
+    px/m), and principal point offsets $c_x$ and $c_y$.  Given
+    $\mathbf{K}$, the back-projection of any pixel $(u, v)$ into a
+    unit ray in the camera frame is $\mathbf{K}^{-1}[u,\,v,\,1]^T$,
+    which Equation~\eqref{eq:pixel_ray} then rotates into ECEF space
+    via $\mathbf{R}_{\text{sat}}$.}
+  \label{fig:pinhole_camera}
+\end{figure}
+
 Given this pose and the camera's known intrinsic matrix $\mathbf{K}$
 (focal length and pixel dimensions, calibrated on the ground before
 launch), every pixel $(u, v)$ in the image defines a unique ray in
-ECEF space.  Using the same projective geometry model introduced in
+ECEF space (Figure~\ref{fig:pinhole_camera}).  Using the same projective geometry model introduced in
 Equation~\eqref{eq:projection}, the ray direction in ECEF is:
  
 \begin{equation}
@@ -9298,6 +9109,210 @@ geodetic coordinate to every image pixel is called
 \textbf{orthorectification}~\cite{toutin2004geometric}, and its output
 is a georeferenced image in which every pixel is anchored to a precise
 location on the spheroid.
+
+\paragraph{Worked Example: Ray Back-Projection for a Sentinel-2 Overpass of Paris.}
+
+We trace a single pixel from a Sentinel-2A image of the Paris region
+back to its ground location on the WGS~84 ellipsoid, illustrating
+Equation~\eqref{eq:pixel_ray} and the ray--ellipsoid intersection
+with fully numerical values.
+
+\medskip
+\noindent\textbf{Sensor and orbit parameters.}
+
+The Sentinel-2A MSI instrument~\cite{drusch2012sentinel} carries a
+$10{,}980 \times 10{,}980$ pixel focal plane for its 10\,m-resolution
+bands, with a physical focal length of $f = 0.6$\,m and a pixel pitch
+of $6.5\,\mu$m.  The resulting focal length in pixel units is:
+\[
+  f_x = f_y = \frac{0.6\ \text{m}}{6.5 \times 10^{-6}\ \text{m/px}}
+            = 92{,}308\ \text{px},
+\]
+and the principal point is at the image center:
+$c_x = c_y = 5{,}490\ \text{px}$.  The intrinsic matrix is therefore:
+\[
+  \mathbf{K} =
+  \begin{bmatrix}
+    92{,}308 & 0        & 5{,}490 \\
+    0        & 92{,}308 & 5{,}490 \\
+    0        & 0        & 1
+  \end{bmatrix}\ \text{(all entries in pixels)}.
+\]
+We consider a descending-node pass at 10:30 local solar time ---
+Sentinel-2's nominal overpass time~\cite{drusch2012sentinel} --- at
+the moment the satellite is at nadir over the Eiffel Tower location:
+\[
+  \phi_{\text{sat}} = 48.8584^\circ\text{N},\quad
+  \lambda_{\text{sat}} = 2.2945^\circ\text{E},\quad
+  h_{\text{sat}} = 786{,}000\ \text{m}.
+\]
+Applying Equation~\eqref{eq:ecef} gives the satellite's ECEF position:
+\[
+  \mathbf{X}_{\text{sat}}
+  \approx (4{,}717{,}650,\; 189{,}027,\; 5{,}372{,}139)^T\ \text{m}.
+\]
+
+\medskip
+\noindent\textbf{Satellite attitude.}
+
+For a nadir-pointing, south-flying satellite above $(\phi_0,\lambda_0)$,
+the camera frame has its $x$-axis pointing East, $y$-axis pointing
+South (i.e.\ $-$North), and $z$-axis pointing toward nadir
+(i.e.\ $-$Up).  The attitude matrix that maps camera-frame vectors
+to ECEF is:
+\[
+  \mathbf{R}_{\text{sat}}
+  = \mathbf{R}_{\text{ENU}}^T(\phi_0, \lambda_0)\cdot
+  \begin{bmatrix}1&0&0\\0&-1&0\\0&0&-1\end{bmatrix}
+  \approx
+  \begin{bmatrix}
+   -0.0400 & +0.7525 & -0.6574 \\
+   +0.9992 & +0.0302 & -0.0263 \\
+    0.0000 & -0.6579 & -0.7531
+  \end{bmatrix},
+\]
+where $\mathbf{R}_{\text{ENU}}$ uses the Paris values from
+Equation~\eqref{eq:enu_rotation} and the diagonal matrix flips the
+$y$ and $z$ axes to align the optical axis with the nadir direction.
+
+\medskip
+\noindent\textbf{The pixel of interest.}
+
+Consider the pixel $(u, v) = (5{,}523,\; 5{,}518)$ in the Sentinel-2
+image, located 33 columns and 28 rows from the image center ---
+corresponding to a ground feature roughly 330\,m east and 280\,m
+south of the nadir point.  We now recover its ground location using
+only the pixel coordinates, $\mathbf{K}$, $\mathbf{R}_{\text{sat}}$,
+and $\mathbf{X}_{\text{sat}}$.
+
+\medskip
+\noindent\textbf{Step 1: Apply $\mathbf{K}^{-1}$ to obtain the
+normalized image coordinate.}
+
+\[
+  \mathbf{K}^{-1}
+  \begin{bmatrix} 5{,}523 \\ 5{,}518 \\ 1 \end{bmatrix}
+  =
+  \begin{bmatrix}
+    (5{,}523 - 5{,}490)/92{,}308 \\
+    (5{,}518 - 5{,}490)/92{,}308 \\
+    1
+  \end{bmatrix}
+  =
+  \begin{bmatrix}
+    0.000358 \\ 0.000303 \\ 1.000000
+  \end{bmatrix}.
+\]
+This normalized vector is the direction of the pixel's ray in the
+camera coordinate frame: for every 1\,m of depth along the optical
+axis, the ray is displaced $0.000358$\,m in the camera $x$-direction
+and $0.000303$\,m in the camera $y$-direction --- a very slight off-nadir
+angle, consistent with a pixel only 33 columns from the image center.
+
+\medskip
+\noindent\textbf{Step 2: Rotate into ECEF via Equation~\eqref{eq:pixel_ray}.}
+
+\[
+  \mathbf{R}_{\text{sat}}
+  \begin{pmatrix} 0.000358 \\ 0.000303 \\ 1.000000 \end{pmatrix}
+  \approx
+  \begin{pmatrix} -0.6572 \\ -0.0260 \\ -0.7533 \end{pmatrix}.
+\]
+This vector already has unit norm to four decimal places
+($\|\cdot\| = 1.0000$), so no further normalization is needed.
+The ray direction in ECEF is:
+\[
+  \hat{\mathbf{r}}(u,v)
+  = (-0.6572,\; -0.0260,\; -0.7533)^T.
+\]
+The large negative $Z$-component confirms the ray is directed steeply
+downward toward the Earth's surface, as expected for a near-nadir
+pixel.
+
+\medskip
+\noindent\textbf{Step 3: Ray--ellipsoid intersection.}
+
+We solve for $s > 0$ such that
+$\mathbf{X}_{\text{sat}} + s\,\hat{\mathbf{r}}$ lies on the WGS~84
+ellipsoid:
+\[
+  \frac{(X_{\text{sat}} + s\,\hat{r}_X)^2
+      + (Y_{\text{sat}} + s\,\hat{r}_Y)^2}{a^2}
+  + \frac{(Z_{\text{sat}} + s\,\hat{r}_Z)^2}{b^2}
+  = 1.
+\]
+Expanding yields the quadratic $As^2 + Bs + C = 0$ with:
+\begin{align*}
+  A &= \frac{\hat{r}_X^2 + \hat{r}_Y^2}{a^2}
+       + \frac{\hat{r}_Z^2}{b^2}
+     \approx 2.468 \times 10^{-14}, \\[4pt]
+  B &= \frac{2(X_{\text{sat}}\hat{r}_X
+              + Y_{\text{sat}}\hat{r}_Y)}{a^2}
+       + \frac{2\,Z_{\text{sat}}\hat{r}_Z}{b^2}
+     \approx -3.530 \times 10^{-7}, \\[4pt]
+  C &= \frac{X_{\text{sat}}^2 + Y_{\text{sat}}^2}{a^2}
+       + \frac{Z_{\text{sat}}^2}{b^2} - 1
+     \approx 0.2622.
+\end{align*}
+The discriminant $\sqrt{B^2 - 4AC} \approx 3.142 \times 10^{-7}$,
+giving the near-surface root:
+\[
+  s = \frac{-B - \sqrt{B^2 - 4AC}}{2A}
+    \approx \frac{3.530 \times 10^{-7} - 3.142 \times 10^{-7}}
+                 {4.936 \times 10^{-14}}
+    \approx 786{,}000\ \text{m}.
+\]
+The result $s \approx 786{,}000$\,m is equal to the orbital altitude ---
+a reassuring sanity check: for a nadir-pointing pixel on a satellite
+directly overhead, the ray travel distance to the ellipsoid surface
+must equal the orbital altitude.
+
+\medskip
+\noindent\textbf{Step 4: Recover the ground point.}
+
+\[
+  \mathbf{X}_{\text{ground}}
+  = \mathbf{X}_{\text{sat}} + s\,\hat{\mathbf{r}}
+  \approx
+  \begin{pmatrix}
+    4{,}717{,}650 + 786{,}000 \times (-0.6572) \\
+    189{,}027     + 786{,}000 \times (-0.0260)  \\
+    5{,}372{,}139 + 786{,}000 \times (-0.7533)
+  \end{pmatrix}
+  \approx
+  \begin{pmatrix}
+    4{,}201{,}101 \\ 168{,}607 \\ 4{,}780{,}059
+  \end{pmatrix}\ \text{m}.
+\]
+Inverting to geodetic coordinates via the iterative
+method of~\cite{bowring1985geodetic}:
+\[
+  \phi   = 48.8563^\circ\text{N},\quad
+  \lambda = 2.2983^\circ\text{E},\quad
+  h       \approx 0\ \text{m}.
+\]
+
+\medskip
+\noindent\textbf{Interpreting the result.}
+
+The recovered position ($48.8563^\circ$N, $2.2983^\circ$E) lies
+approximately 360\,m from the Eiffel Tower base
+($48.8584^\circ$N, $2.2945^\circ$E), and the recovered altitude
+is $h \approx 0$\,m rather than the 35\,m terrain elevation of the
+tower's base.  Both discrepancies arise from the same source: the
+ray--ellipsoid intersection places the ground point on the bare
+WGS~84 ellipsoid surface ($h = 0$), whereas the actual terrain at
+the Eiffel Tower location is 35\,m above the ellipsoid and the tower
+tip is at 330\,m.  This horizontal offset of $\sim$360\,m is the
+\textbf{parallax displacement} due to terrain relief: a 330\,m tall
+object imaged from 786\,km altitude at a slight off-nadir angle
+appears horizontally displaced from its true ground position.
+Replacing the bare ellipsoid with a Digital Elevation Model in the
+intersection step --- as described in the paragraph above --- removes
+this displacement, recovering the true ground coordinates to the
+sensor's 10\,m ground sampling distance.  This is precisely the
+correction that transforms a raw satellite image into a fully
+orthorectified GeoTIFF ready for GFM pre-training.
 
 % ------------------------------------------------------------------
 % Paragraph to insert after the orthorectification paragraph
@@ -9423,7 +9438,7 @@ by the motion planner as described in Section~\ref{sec:enu}.
 
  
 \paragraph{Convergence in ECEF.}
- 
+
 Both pipelines --- satellite orthorectification and LiDAR direct
 georeferencing --- deposit their outputs into the same ECEF coordinate
 space.  This convergence is not a coincidence of convention; it is the
@@ -9438,11 +9453,472 @@ explicit and exact, with no map-projection distortion and no seam
 artifacts.  This is the deep reason why ECEF is the right pre-training
 frame for the Geo-spatial Foundational Model: it is the coordinate
 system in which raw sensor data from satellites and ground vehicles
-becomes commensurate, setting the stage for the tokenization and
-fusion machinery developed in the remainder of this chapter.
+becomes commensurate.
+
+With the coordinate foundations in place, we can now be precise about
+what the Geo-spatial Foundational Model is actually being asked to
+produce.  Base Maps and HD Maps are not abstract targets---they are
+concrete data structures with well-defined mathematical representations,
+and those representations make direct use of the ECEF and ENU frames
+developed in this section.  We examine each in turn.
+
+% ------------------------------------------------------------------
+\section{Data Representations for Base Maps and HD Maps}
+\label{sec:representations}
+% ------------------------------------------------------------------
+
+A Base Map and an HD Map differ not only in resolution but in the
+fundamental mathematical objects used to represent them.  Understanding
+these representations precisely is essential before we can design a
+model architecture capable of producing them: the choice of output
+representation directly shapes the tokenization strategy of
+Section~\ref{sec:tokenization_spatial}, the fusion mechanism of
+Section~\ref{sec:fusion}, and the learning objectives of
+Section~\ref{sec:pretraining_objectives}.
+
+% ------------------------------------------------------------------
+\subsection{Base Map Representation}
+% ------------------------------------------------------------------
+
+A Base Map is organized as a collection of \textbf{overlapping
+geometric layers}, each encoding a different category of real-world
+feature.  The three primary layer types are:
+
+\begin{itemize}
+  \item \textbf{Road network graph.}  The road network is represented
+    as a directed graph $\mathcal{G} = (\mathcal{V}, \mathcal{E})$,
+    where each node $v \in \mathcal{V}$ is a geodetic point (an
+    intersection or road endpoint) stored as a triple
+    $(\phi, \lambda, h)$ in WGS~84 coordinates, and each directed edge
+    $e = (v_i, v_j) \in \mathcal{E}$ is a road segment connecting two
+    nodes.  Every edge carries a set of scalar and categorical
+    attributes: road class (motorway, arterial, residential), number
+    of lanes, speed limit, surface type, and one-way flag.
+    Geometrically, each edge is a \textbf{polyline}---an ordered
+    sequence of geodetic waypoints $\{(\phi_k, \lambda_k)\}_{k=1}^{K}$
+    that traces the center-line of the road between its two endpoint
+    nodes.  A continent-scale base map may contain hundreds of millions
+    of such edges.
+
+  \item \textbf{Polygon layers.}  Non-linear features---building
+    footprints, land use zones, bodies of water, administrative
+    boundaries---are represented as \textbf{closed polygons} in
+    geodetic coordinates.  Each polygon $\mathcal{P} =
+    \{(\phi_k, \lambda_k)\}_{k=1}^{K}$ (with $(\phi_K, \lambda_K) =
+    (\phi_1, \lambda_1)$) is tagged with a semantic category and
+    optional scalar attributes (building height, land use class).
+
+  \item \textbf{Elevation raster.}  Terrain height is stored as a
+    \textbf{Digital Elevation Model (DEM)}: a regular grid of scalar
+    elevation values $h(\phi, \lambda)$ sampled at a fixed angular
+    resolution (typically 1 arc-second $\approx$ 30 m at the equator
+    for global products).  The DEM is distinct from the vector layers
+    above---it is a raster, not a graph---and is used to resolve the
+    3D position of road and polygon features above the ellipsoid.
+\end{itemize}
+
+As a concrete illustration, consider the OpenStreetMap
+(OSM)~\cite{haklay2008openstreetmap} data model, which is widely used
+in research and industry.  OSM represents the world as a set of
+\emph{nodes}, \emph{ways}, and \emph{relations}, each carrying a
+flexible set of key-value \emph{tags} that encode semantic attributes.
+A \textbf{node} is a geodetic point stored directly as WGS~84
+latitude and longitude, with a unique integer identifier:
+
+\begin{verbatim}
+<node id="271027440" lat="48.8584700" lon="2.2944600">
+  <tag k="name"    v="Eiffel Tower"/>
+  <tag k="tourism" v="attraction"/>
+</node>
+\end{verbatim}
+
+\noindent This node locates the Eiffel Tower at geodetic coordinates
+$(\phi, \lambda) = (48.8584700^\circ\,\text{N},\;
+2.2944600^\circ\,\text{E})$ --- the same location used as the running
+example throughout Section~\ref{sec:geodetic}.  Its ECEF position
+$(X, Y, Z) \approx (4{,}200{,}952,\; 168{,}601,\; 4{,}779{,}888)$\,m
+was computed in Equation~\eqref{eq:ecef}; the OSM node stores only
+the geodetic coordinates, from which ECEF can be recovered on demand
+via Equation~\eqref{eq:prime_vertical}--\eqref{eq:ecef}.
+
+\noindent A \textbf{way} is an ordered sequence of node references
+forming either an open polyline (a road segment) or a closed polygon
+(a building footprint):
+
+\begin{verbatim}
+<way id="5090250">
+  <nd ref="271027440"/>
+  <nd ref="271027441"/>
+  <nd ref="271027442"/>
+  <tag k="highway"  v="motorway"/>
+  <tag k="maxspeed" v="130"/>
+  <tag k="lanes"    v="3"/>
+</way>
+\end{verbatim}
+
+\noindent A \textbf{relation} groups nodes, ways, and other relations
+into a named semantic role --- for example, assembling the individual
+way segments of a motorway into a single named route, or encoding a
+polygon with holes (an outer boundary way and one or more inner
+boundary ways):
+
+\begin{verbatim}
+<relation id="12345">
+  <member type="way" ref="5090250" role="outer"/>
+  <member type="way" ref="5090251" role="inner"/>
+  <tag k="type"    v="multipolygon"/>
+  <tag k="landuse" v="forest"/>
+</relation>
+\end{verbatim}
+
+\noindent The three element types together form a flexible, layered
+graph: nodes provide the geodetic anchor points in WGS~84
+$(\phi, \lambda)$ coordinates, ways chain them into linear and areal
+geometry, and relations impose higher-order semantic structure.  The
+GFM must learn to produce output that is equivalent in content to
+this representation --- recovering not only the correct geodetic
+coordinates of each element but also the correct tags and the correct
+graph connectivity among them.
+
+% ------------------------------------------------------------------
+\subsection{HD Map Representation}
+% ------------------------------------------------------------------
+
+An HD Map is a substantially richer data structure than a Base Map.
+Where a Base Map records the \emph{existence} and \emph{rough shape}
+of a road in geodetic coordinates, an HD Map records the
+\emph{precise 3D geometry} of every lane boundary, road marking,
+sign, and surface feature at centimeter accuracy.  This precision
+demands a local Cartesian coordinate frame rather than geodetic
+coordinates: at centimeter scales, the curvature of the Earth's
+surface is negligible over the spatial extent of a single HD map
+tile, and working in meters rather than degrees makes geometric
+operations (distance, offset, intersection) straightforward.  The
+standard choice is the \textbf{East-North-Up (ENU) frame}
+introduced in Section~\ref{sec:enu}, anchored at a reference origin
+$\mathbf{O}_{local}$.
+
+\paragraph{The Local ENU Origin.}
+The origin $\mathbf{O}_{local}$ of the ENU frame is stored as a
+geodetic triple $(\phi_0, \lambda_0, h_0)$ in WGS~84 coordinates.
+This triple serves two roles: it is the human-readable geographic
+anchor of the HD map tile (locating it unambiguously on the Earth's
+surface), and it is the input to Equation~\eqref{eq:ecef} that
+produces the ECEF point $\mathbf{X}_0$ required by the ENU rotation
+matrix $\mathbf{R}_{\text{ENU}}(\phi_0, \lambda_0)$
+(Equation~\ref{eq:enu_rotation}).  Every 3D coordinate in the HD map
+is then an ENU displacement $(e, n, u)$ measured in metres from
+$\mathbf{X}_0$, recoverable to full ECEF precision via
+Equation~\eqref{eq:enu_transform}.  The chain
+\[
+  (\phi_0, \lambda_0, h_0)
+  \;\xrightarrow{\text{Eq.~\ref{eq:ecef}}}\;
+  \mathbf{X}_0 \in \mathbb{R}^3
+  \;\xrightarrow{\text{Eq.~\ref{eq:enu_transform}}}\;
+  \mathcal{F}_{enu}
+\]
+anchors the entire HD map tile to the global WGS~84 spheroid with no
+loss of geodetic precision.
+
+The standard representation organizes HD map content into two
+interlocking components:
+
+\begin{itemize}
+    \item \textbf{Geometric primitives layer.} Every physical feature
+    in the driving environment is stored as a typed geometric object
+    in the local ENU frame
+    $\mathcal{F}_{enu} = \{ \mathbf{O}_{local}, \mathbf{\hat{e}},
+    \mathbf{\hat{n}}, \mathbf{\hat{u}} \}$, where $\mathbf{\hat{e}}$
+    points East, $\mathbf{\hat{n}}$ points North, and $\mathbf{\hat{u}}$
+    points Up relative to the WGS~84 ellipsoid at $\mathbf{O}_{local}$:
+
+    \begin{itemize}
+        \item \emph{Lane boundaries}: 3D polylines $\mathcal{L}$
+        defined by an ordered sequence of ENU waypoints:
+        $$\mathcal{L} = \{ \mathbf{p}_k \in \mathbb{R}^3 \mid
+        \mathbf{p}_k = (e_k, n_k, u_k),\,
+        \|\mathbf{p}_{k+1} - \mathbf{p}_k\|_2 \leq 0.1\text{m}
+        \}_{k=1}^{K}$$
+        where $(e_k, n_k)$ are horizontal displacements in metres
+        from $\mathbf{O}_{local}$ and $u_k$ is the height above the
+        ellipsoid surface at that point.  The spacing constraint
+        $\|\mathbf{p}_{k+1} - \mathbf{p}_k\|_2 \leq 0.1$\,m ensures
+        centimeter-level geometric fidelity along curved lane edges.
+        Each polyline is annotated with a boundary type attribute
+        vector $\mathcal{A}_L \in
+        \{\text{solid, dashed, curb, barrier}\}$.
+
+        \item \emph{Road markings}: 3D polygons $\mathcal{M}$
+        representing the boundary of painted features (e.g., arrows,
+        stop lines), defined by $M$ ENU boundary vertices:
+        $$\mathcal{M} = \{ \mathbf{v}_i \in \mathbb{R}^3 \mid
+        \mathbf{v}_i = (e_i, n_i, u_i) \}_{i=1}^{M}$$
+        where the sequence forms a closed loop
+        $(\mathbf{v}_M \to \mathbf{v}_1)$ and all vertices are
+        constrained to the local road surface manifold $\mathcal{S}$,
+        such that $u_i = f_{\text{surface}}(e_i, n_i)$.  The surface
+        function $f_{\text{surface}}$ is itself part of the HD map,
+        encoded as the road surface mesh described below.
+
+        \item \emph{Traffic signs and signals}: Oriented 3D bounding
+        boxes $\mathbf{B}$ in the ENU frame, defined by:
+        $$\mathbf{B} = \{ \mathbf{c}, \mathbf{s}, \theta \}$$
+        where $\mathbf{c} = (e_c, n_c, u_c)$ is the geometric center
+        in ENU coordinates, $\mathbf{s} = (w, h, d)$ are the
+        dimensions in metres (width, height, depth), and
+        $\theta \in [0, 2\pi)$ is the yaw angle measured from the
+        East axis $\mathbf{\hat{e}}$ in the horizontal ENU plane.
+
+        \item \emph{Road surface}: A triangulated mesh
+        $\mathcal{T} = (\mathcal{V}, \mathcal{F})$ where:
+        \begin{itemize}
+            \item $\mathcal{V} = \{ \mathbf{v}_j = (e_j, n_j, u_j) \}$
+            is the set of ENU vertices encoding elevation $u$ with
+            centimeter-level precision above the ellipsoid.
+            \item $\mathcal{F} = \{ (j, k, l) \}$ is the set of
+            triangular faces satisfying the Delaunay condition in the
+            $(e, n)$ horizontal plane.
+            \item Material properties are encoded via a semantic
+            mapping $\mu: \mathcal{F} \to
+            \{\text{asphalt, concrete, gravel}\}$.
+            \item Potholes are identified as subsets of faces
+            $\mathcal{F}_{pothole} \subset \mathcal{F}$ with high
+            local variance in the surface normal $\mathbf{\hat{n}}_f$.
+        \end{itemize}
+    \end{itemize}
+
+  \item \textbf{Topology graph (lanelet graph).}  The geometric
+    primitives alone do not tell a vehicle \emph{how to drive}.  A
+    \textbf{lanelet}~\cite{bender2014lanelets} is the fundamental
+    topological unit of an HD Map: it is a short, directed segment of
+    drivable surface bounded on its left and right by two lane boundary
+    polylines, both expressed in the same local ENU frame.  Formally,
+    a lanelet is a tuple $\ell = (\mathbf{L}_{\text{left}},\,
+    \mathbf{L}_{\text{right}},\, \mathcal{A})$, where
+    $\mathbf{L}_{\text{left}}$ and $\mathbf{L}_{\text{right}}$ are
+    the bounding ENU polylines and $\mathcal{A}$ is a set of
+    regulatory attributes (speed limit, right-of-way, allowed
+    maneuvers).  Lanelets are connected into a directed graph
+    $\mathcal{G}_{\text{HD}} = (\mathcal{L},
+    \mathcal{E}_{\text{HD}})$, where a directed edge
+    $({\ell}_i, {\ell}_j) \in \mathcal{E}_{\text{HD}}$ encodes that a
+    vehicle may legally proceed from lanelet $\ell_i$ to lanelet
+    $\ell_j$.  A full intersection may contain dozens of lanelets and
+    hundreds of edges encoding every permitted turning movement.
+\end{itemize}
+
+\paragraph{Concrete Illustration: OpenDRIVE.}
+
+The OpenDRIVE standard~\cite{dupuis2010opendrive} is the dominant
+format for HD map exchange in the autonomous driving industry.  It
+represents road geometry as a hierarchy of \emph{roads},
+\emph{lane sections}, and \emph{lanes}, where each road's
+center-line is parameterized as a smooth curve (clothoid or
+polynomial spline) and lane boundaries are derived from it by lateral
+offsets.  Crucially, every OpenDRIVE file begins with a
+\texttt{<header>} block that anchors the entire local coordinate
+system to the global WGS~84 spheroid via a \texttt{<geoReference>}
+element containing a PROJ projection string:
+
+\begin{verbatim}
+<OpenDRIVE>
+  <header revMajor="1" revMinor="6"
+          name="Paris_7th_Arrondissement"
+          version="1.0"
+          date="2024-03-15T10:00:00"
+          north="1000.0" south="0.0"
+          east="1000.0"  west="0.0">
+    <geoReference>
+      <![CDATA[+proj=tmerc +lat_0=48.8584700
+               +lon_0=2.2944600
+               +k=1.0 +x_0=0.0 +y_0=0.0
+               +ellps=WGS84
+               +towgs84=0,0,0,0,0,0,0
+               +units=m +no_defs]]>
+    </geoReference>
+  </header>
+\end{verbatim}
+
+\noindent The PROJ string deserves careful reading, as it is the
+precise mathematical specification of how every $(x, y)$ coordinate
+in the file maps to a global geodetic position.  The projection type
+\texttt{+proj=tmerc} is a \textbf{Transverse Mercator} projection,
+the standard choice for HD maps covering areas up to a few tens of
+kilometers in extent, where its distortion is negligible.  The
+parameters \texttt{+lat\_0=48.8584700} and
+\texttt{+lon\_0=2.2944600} set the geodetic origin of the projection
+to $(\phi_0, \lambda_0) = (48.8584700^\circ\,\text{N},\;
+2.2944600^\circ\,\text{E})$ --- exactly the Eiffel Tower node from
+the OSM example above.  The offsets \texttt{+x\_0=0.0} and
+\texttt{+y\_0=0.0} place the Cartesian origin at this geodetic point,
+so a coordinate $(x, y) = (0, 0)$ in the file corresponds to the
+Eiffel Tower's base.  The parameter \texttt{+ellps=WGS84} specifies
+that distances are measured on the same WGS~84 spheroid used
+throughout Section~\ref{sec:geodetic}, and \texttt{+units=m}
+confirms that all coordinates are in metres.
+
+Within this projection, the file's $(x, y)$ coordinates are
+\emph{approximately} equivalent to the local ENU East and North
+displacements $(e, n)$ computed via Equation~\eqref{eq:enu_transform}
+from the same geodetic origin.  The approximation is extremely tight
+--- sub-millimetre over a 1\,km tile --- because the Transverse
+Mercator projection is conformal (angle-preserving) and its scale
+distortion at the origin is identically zero by construction.
+Elevation $u$ does not appear in the \texttt{<planView>} geometry
+because OpenDRIVE separates horizontal and vertical geometry by
+design: the plan-view curve defines the road's horizontal path, while
+a separate \texttt{<elevationProfile>} element encodes the road's
+height above the ellipsoid as a polynomial function of arc-length
+position $s$ along the center-line.  This separation mirrors the
+geodetic decomposition of Section~\ref{sec:ecef}: horizontal position
+is governed by $(\phi, \lambda)$ and vertical position by $h$, and
+the two are independent degrees of freedom on the WGS~84 spheroid.
+
+With the header establishing global localization, the road geometry
+and lane structure follow:
+
+\begin{verbatim}
+  <road name="Avenue_Gustave_Eiffel"
+        length="432.7" id="42" junction="-1">
+    <planView>
+      <!--
+        Center-line: clothoid arc.
+        x, y are Transverse Mercator Easting and Northing
+        in metres from the Eiffel Tower origin (lat_0, lon_0).
+        hdg is heading in radians measured clockwise from North
+        in the (x,y) plane, i.e. from the +y (North) axis.
+        No z coordinate appears here: elevation is encoded
+        separately in <elevationProfile> below.
+      -->
+      <geometry s="0.0"
+                x="448312.1" y="5413.2"
+                hdg="0.314"  length="432.7">
+        <spiral curvStart="0.000" curvEnd="0.002"/>
+      </geometry>
+    </planView>
+    <elevationProfile>
+      <!--
+        Elevation above WGS84 ellipsoid as a cubic polynomial
+        in arc-length s along the road center-line:
+        u(s) = a + b*s + c*s^2 + d*s^3
+        At s=0: u = 35.2 m (ground level near Eiffel Tower base).
+      -->
+      <elevation s="0.0" a="35.2" b="0.003"
+                 c="-0.0001" d="0.0"/>
+    </elevationProfile>
+    <lanes>
+      <laneSection s="0.0">
+        <left>
+          <lane id="1" type="driving" level="false">
+            <width sOffset="0.0" a="3.75"/>
+          </lane>
+        </left>
+        <center>
+          <lane id="0" type="none"/>
+        </center>
+        <right>
+          <lane id="-1" type="driving" level="false">
+            <width sOffset="0.0" a="3.75"/>
+            <speed sOffset="0.0" max="50"/>
+          </lane>
+        </right>
+      </laneSection>
+    </lanes>
+    <signals>
+      <!--
+        Speed limit sign at s=210m along the road,
+        t=-2.1m lateral offset from center-line
+        (negative t = right side of road in OpenDRIVE convention).
+        Position in global ENU / ECEF recovered by evaluating
+        the center-line curve at s=210, applying lateral offset
+        t=-2.1m perpendicular to the heading, and looking up
+        elevation from the elevationProfile at s=210.
+      -->
+      <signal s="210.0" t="-2.1" id="77"
+              name="speed_limit"
+              dynamic="no" orientation="+">
+        <validity fromLane="-1" toLane="-1"/>
+      </signal>
+    </signals>
+  </road>
+</OpenDRIVE>
+\end{verbatim}
+
+\noindent Several features of this representation are worth noting in
+light of the coordinate machinery developed in
+Section~\ref{sec:geodetic}.  First, the road's shape is stored not as
+a list of ENU waypoints but as a \textbf{compact parametric curve}: a
+single clothoid arc defined by its start position $(x, y)$ in
+Transverse Mercator coordinates, a heading angle \texttt{hdg}, a
+length, and a curvature range.  The full ENU position of any point
+along the road --- including any lane boundary waypoint --- can be
+reconstructed on demand by evaluating the parametric curve at the
+desired arc-length $s$, applying the lateral \texttt{width} offset
+perpendicular to the heading, and reading the elevation from the
+\texttt{<elevationProfile>} polynomial.  The resulting $(x, y, u)$
+triple is then a local ENU coordinate recoverable to global ECEF via
+Equation~\eqref{eq:enu_transform} using the geodetic origin
+$(\phi_0, \lambda_0, h_0)$ stored in the header.
+
+Second, the sign's global position is \emph{implicit}: it is not
+stored as an explicit $(e, n, u)$ triple but is derived procedurally
+from the arc-length parameter $s = 210$\,m and lateral offset
+$t = -2.1$\,m along the road center-line.  This procedural encoding
+is compact and topologically consistent --- moving the road
+automatically moves the sign --- but it requires the GFM to invert
+the parametric representation during training, reconstructing explicit
+3D waypoints from the implicit curve parameters.  Whether to predict
+the implicit parameters directly or to materialize the explicit ENU
+waypoints and predict those instead is one of the key architectural
+decisions addressed in Section~\ref{sec:vocab}.
+
+% ------------------------------------------------------------------
+\subsection{Why Both Representations Challenge a Neural Model}
+% ------------------------------------------------------------------
+
+The juxtaposition of Base Map and HD Map representations exposes the
+core difficulty of building a unified geo-spatial foundational model.
+A Base Map graph $\mathcal{G}$ is \emph{topologically rich but
+geometrically coarse}: the graph structure --- which intersections
+connect to which roads --- is the primary information, and waypoint
+positions are stored as geodetic coordinates $(\phi, \lambda)$ whose
+metric relationships require the full ECEF machinery of
+Section~\ref{sec:geodetic} to evaluate.  An HD Map lanelet graph
+$\mathcal{G}_{\text{HD}}$ is \emph{geometrically precise but
+topologically local}: the centimeter-accurate ENU polylines are the
+primary information, and the graph encodes only the immediately
+drivable neighborhood within a single tile's ENU frame.
+
+Both representations mix \textbf{discrete} structure (graph
+connectivity, semantic labels, regulatory categories) with
+\textbf{continuous} geometry (waypoint coordinates, bounding box
+dimensions, surface elevation).  Standard neural architectures
+designed for either pure sequences (language models) or pure grids
+(convolutional networks) handle one or the other well, but not both
+simultaneously and not at the resolution and geographic scale required
+here.  A tokenization scheme that is merely regular --- dividing the
+Earth into equal-latitude-longitude cells, for instance --- would
+introduce the same projection distortions we eliminated in
+Section~\ref{sec:geodetic}: cells near the poles would represent
+far smaller physical areas than cells near the equator, producing a
+spatially inconsistent token space.
+
+The principled solution, developed in Section~\ref{sec:tokenization_spatial},
+is to discretize the Earth's surface using a hierarchy of
+\emph{approximately equal-area} cells that respects the spheroidal
+geometry of WGS~84 --- the S2 geometry system --- and to linearize
+those cells into a token sequence using a space-filling curve that
+preserves spatial locality.  This tokenization scheme bridges the
+gap between the continuous, curved, multi-scale geometry of Base Maps
+and HD Maps on one side, and the discrete, flat, fixed-length token
+sequences required by Transformer architectures on the other.
+
  
+
+
 % ------------------------------------------------------------------
 \section{Spatial Tokenization via Space-Filling Curves}
+\label{sec:tokenization_spatial}
 % ------------------------------------------------------------------
  
 With a distortion-free global coordinate system in place, we now face
@@ -10181,19 +10657,23 @@ table, analogous to token embeddings in a language
 model~\cite{vaswani2017attention}.
 The ENU offset $\boldsymbol{\delta}$ is projected to dimension $h$
 via the linear layer $\mathbf{W}_{\delta} \in \mathbb{R}^{h \times 3}$.
-This design is identical in form to the token-plus-position embedding
-used in the Transformer input layer~\cite{dosovitskiy2021vit}; the
-innovation lies in the \emph{meaning} of the two components.
-The cell embedding encodes coarse geographic identity ---
+The two components encode complementary aspects of geographic location:
+the cell embedding captures coarse geographic identity ---
 ``this token belongs to a particular 5-metre block on the
 \emph{Avenue de Wagram} near the Arc de Triomphe'' ---
-while the offset embedding encodes precise sub-cell geometry ---
+while the offset embedding captures precise sub-cell geometry ---
 ``within that block, this waypoint is 74\,cm west and 31\,cm north
 of the cell centre.''
-Together they span twelve orders of magnitude in spatial scale,
-from global S2 face assignment down to centimeter-level waypoint
-precision, within a single fixed-length embedding vector.
-
+This hierarchical position embedding is subsequently added to the
+patch or pillar feature embedding --- exactly as a position embedding
+is added to a patch projection in the Vision
+Transformer~\cite{dosovitskiy2021vit} --- so that each token
+carries both \emph{what} is at a location and \emph{where} that
+location is on the Earth's surface.
+Together the two position embedding components span twelve orders of
+magnitude in spatial scale, from global S2 face assignment down to
+centimeter-level waypoint precision, within a single fixed-length
+embedding vector.
  
 \begin{figure}[htbp]
   \centering
@@ -10542,123 +11022,374 @@ and 3D points.
  
 \subsection{Projective Geometry: Aligning Pixels and Points}
 \label{sec:projection}
- 
-A LiDAR return at 3-D position $\mathbf{X}_{3D} = [x, y, z]^T$
-(in the sensor frame) is observed as the 2-D image pixel
-$(u, v)$ via perspective projection~\cite{hartley2003multiple}:
- 
+
+A LiDAR return at 3D position $\mathbf{p}_{\text{lid}} =
+[x, y, z]^T$ in the sensor's own coordinate frame carries no
+information about where it appears in a co-mounted camera image.
+Bridging the two modalities requires the \textbf{extrinsic matrix}
+$[\mathbf{R} \mid \mathbf{t}]$: a rigid-body transformation
+consisting of a rotation $\mathbf{R} \in SO(3)$ and a translation
+$\mathbf{t} \in \mathbb{R}^3$ that expresses the LiDAR frame's
+origin and orientation relative to the camera frame.  Applying the
+extrinsic transform first moves the LiDAR point into the camera
+coordinate frame:
+
+\begin{equation}
+  \mathbf{p}_{\text{cam}} = \mathbf{R}\,\mathbf{p}_{\text{lid}} + \mathbf{t},
+  \label{eq:extrinsic}
+\end{equation}
+
+after which the intrinsic matrix $\mathbf{K}$ --- whose four
+parameters $(f_x, f_y, c_x, c_y)$ were established in
+Figure~\ref{fig:pinhole_camera} --- projects the camera-frame point
+onto the image plane via the full perspective projection:
+
 \begin{equation}
   s\begin{bmatrix}u \\ v \\ 1\end{bmatrix}
-  = \mathbf{K}\bigl(\mathbf{R}\,\mathbf{X}_{3D} + \mathbf{t}\bigr)
+  = \mathbf{K}\bigl(\mathbf{R}\,\mathbf{p}_{\text{lid}} + \mathbf{t}\bigr)
+  = \mathbf{K}\,[\mathbf{R} \mid \mathbf{t}]\,\mathbf{p}_{\text{lid}}
   \label{eq:projection}
 \end{equation}
- 
-Here $s > 0$ is a scalar depth (the distance along the optical
-axis), $\mathbf{K} \in \mathbb{R}^{3 \times 3}$ is the camera's
-\textbf{intrinsic matrix}:
- 
-\begin{equation}
+
+where $s > 0$ is the scalar depth of the point along the camera's
+optical axis.  The division of labour between the two matrices is
+precise: $[\mathbf{R} \mid \mathbf{t}]$ performs a \textbf{3D-to-3D}
+rigid-body frame change, moving the point from sensor coordinates
+into camera coordinates without any loss of depth information;
+$\mathbf{K}$ then performs the \textbf{3D-to-2D} perspective
+projection, collapsing depth into the scalar $s$ and mapping the
+camera-frame ray onto the pixel grid.
+
+The extrinsic matrix is measured once during a calibration procedure
+before the sensor pair is deployed --- typically by imaging a
+calibration target (a checkerboard or a set of retro-reflective
+spheres) that is simultaneously visible in the camera and detectable
+in the LiDAR point cloud, then solving for the $(\mathbf{R},
+\mathbf{t})$ that minimizes the reprojection error across many target
+poses~\cite{zhang2000flexible}.  Once calibrated, $[\mathbf{R} \mid
+\mathbf{t}]$ is fixed for the lifetime of the sensor pair and stored
+as part of the sensor's metadata alongside $\mathbf{K}$.
+
+\paragraph{Worked Example: Projecting a LiDAR Return onto the Camera Image.}
+
+We illustrate Equation~\eqref{eq:projection} using a concrete LiDAR
+return from the Eiffel Tower scene.  Suppose the mapping vehicle is
+parked at the base of the tower, whose ENU coordinates were computed
+in Section~\ref{sec:enu}.  The vehicle's LiDAR sensor detects the
+base of a lamp post located 12.4\,m due East and 3.1\,m North of
+the vehicle, at a height of 0.8\,m above the ground:
+\[
+  \mathbf{p}_{\text{lid}} = (12.4,\; 3.1,\; 0.8)^T\ \text{m}
+\]
+in the LiDAR sensor's local frame (aligned with ENU at the vehicle
+position).
+
+The vehicle carries a forward-facing camera whose extrinsic
+calibration places it 0.3\,m ahead of the LiDAR along the vehicle's
+forward axis, 0.1\,m to the right, and 0.4\,m higher.  For a
+vehicle facing East, the camera-to-LiDAR translation is:
+\[
+  \mathbf{t} = (-0.3,\; 0.1,\; -0.4)^T\ \text{m}
+\]
+and the rotation $\mathbf{R} = \mathbf{I}$ (identity, since the
+camera and LiDAR axes are aligned).  The camera's intrinsic matrix
+is:
+\[
   \mathbf{K} =
   \begin{bmatrix}
-    f_x & 0   & c_x \\
-    0   & f_y & c_y \\
-    0   & 0   & 1
-  \end{bmatrix}
-  \label{eq:intrinsic}
-\end{equation}
- 
-encoding focal lengths $(f_x, f_y)$ in pixels and the optical
-center $(c_x, c_y)$, and $[\mathbf{R} \mid \mathbf{t}]$ is the
-\textbf{extrinsic matrix} (rotation and translation from the LiDAR
-frame to the camera frame).
- 
-\textbf{Analogy: The Pinhole Camera and the Slide Projector.}
-A pinhole camera works by admitting light through a tiny hole:
-every 3-D point in the scene casts a unique ray through the pinhole
-onto the image plane.  The intrinsic matrix $\mathbf{K}$ describes
-the pinhole's geometry (how far away the image plane is, where the
-pinhole is centered).  The extrinsic matrix $[\mathbf{R} \mid \mathbf{t}]$
-describes where the pinhole is located and pointed, relative to the
-LiDAR sensor.  Given both, we can trace any 3-D point's shadow onto
-the image plane, and conversely, given a pixel and a depth value,
-we can reconstruct the 3-D point that cast the shadow~\cite{hartley2003multiple}.
- 
-The projection is many-to-one: all 3-D points along the ray
-$\mathbf{r}(s) = \mathbf{R}^{-1}(\mathbf{K}^{-1}[u,v,1]^T s - \mathbf{t})$
-project to the same pixel $(u,v)$.  LiDAR resolves the depth
-ambiguity by providing the actual $s$ (range measurement), completing
-the geometric alignment.  In the model, this projection is used to
-build a \textbf{geometric correspondence map} $\mathcal{C}$: for each
-LiDAR pillar $(i,j)$, we compute which image patches $(p,q)$ overlap
-its projected footprint.  The cross-attention mask in the fusion
-module is initialized from $\mathcal{C}$, biasing attention toward
-geometrically aligned pairs.
+    1{,}200 & 0       & 960 \\
+    0       & 1{,}200 & 540 \\
+    0       & 0       & 1
+  \end{bmatrix}\ \text{(pixels)},
+\]
+corresponding to a $1920 \times 1080$ pixel sensor with equal
+horizontal and vertical focal lengths of $f_x = f_y = 1{,}200$\,px
+and principal point at the image center $(c_x, c_y) = (960, 540)$.
+
+\medskip
+\noindent\textbf{Step 1: Apply the extrinsic transform
+(Equation~\ref{eq:extrinsic}).}
+
+\[
+  \mathbf{p}_{\text{cam}}
+  = \mathbf{I}\,\mathbf{p}_{\text{lid}} + \mathbf{t}
+  = \begin{pmatrix}12.4\\3.1\\0.8\end{pmatrix}
+  + \begin{pmatrix}-0.3\\0.1\\-0.4\end{pmatrix}
+  = \begin{pmatrix}12.1\\3.2\\0.4\end{pmatrix}\ \text{m}.
+\]
+The lamp post base is now expressed in the camera's coordinate
+frame: 12.1\,m ahead of the camera along its optical axis
+($z_{\text{cam}} = 12.1$\,m), 3.2\,m to the right
+($x_{\text{cam}} = 3.2$\,m), and 0.4\,m above the camera center
+($y_{\text{cam}} = 0.4$\,m).  Note that in the standard camera
+convention, $x$ increases rightward, $y$ increases downward, and
+$z$ points forward along the optical axis, so a positive
+$y_{\text{cam}}$ means the point is below the optical axis in the
+image.
+
+\medskip
+\noindent\textbf{Step 2: Apply the intrinsic matrix
+(Equation~\ref{eq:projection}).}
+
+The depth scalar is $s = z_{\text{cam}} = 12.1$\,m.  Applying
+$\mathbf{K}$:
+\begin{align*}
+  u &= f_x \cdot \frac{x_{\text{cam}}}{z_{\text{cam}}} + c_x
+     = 1{,}200 \times \frac{3.2}{12.1} + 960
+     = 1{,}200 \times 0.2645 + 960
+     \approx 317.4 + 960
+     = 1{,}277\ \text{px}, \\[6pt]
+  v &= f_y \cdot \frac{y_{\text{cam}}}{z_{\text{cam}}} + c_y
+     = 1{,}200 \times \frac{0.4}{12.1} + 540
+     = 1{,}200 \times 0.0331 + 540
+     \approx 39.7 + 540
+     = 580\ \text{px}.
+\end{align*}
+The lamp post base projects to pixel $(u, v) = (1{,}277,\; 580)$
+in the camera image --- 317 pixels to the right of center and 40
+pixels below center, consistent with the point lying to the right
+of and slightly below the camera's optical axis.  Both values lie
+well within the $1920 \times 1080$ image boundary.
+
+\medskip
+\noindent\textbf{Geometric correspondence map.}
+In the fusion module, this projection is computed for every occupied
+LiDAR pillar in the scene.  The result is a \textbf{geometric
+correspondence map} $\mathcal{C}$: a sparse mapping from each LiDAR
+pillar $(i,j)$ to the set of image patches $(p,q)$ whose pixel
+footprint overlaps the pillar's projected location.  This map is
+used to initialize the cross-attention mask $\mathbf{M}_{\mathcal{C}}$
+in Equations~\eqref{eq:img2lid_attn} and~\eqref{eq:lid2img_attn},
+restricting each attention head to geometrically valid
+image--LiDAR token pairs and preventing the model from attending
+across modalities at physically inconsistent locations.
+
  
 \subsection{The Cross-Attention Fusion Module}
 \label{sec:fusion}
- 
-With geometric alignment established, the fusion proceeds through a
+
+With geometric alignment established via the projection machinery of
+Section~\ref{sec:projection}, the fusion proceeds through a
 \textbf{bidirectional cross-attention} block~\cite{chen2021crossvit,
 li2022bevformer}.  Let
-$\mathbf{T}^{\text{img}} \in \mathbb{R}^{N_{\text{img}} \times h}$ be
-the image token matrix and
-$\mathbf{T}^{\text{lid}} \in \mathbb{R}^{N_{\text{lid}} \times h}$ be
-the LiDAR token matrix.
- 
+$\mathbf{T}^{\text{img}} \in \mathbb{R}^{N_{\text{img}} \times h}$
+be the image token matrix, where $N_{\text{img}}$ is the number of
+image patch tokens in the tile, and
+$\mathbf{T}^{\text{lid}} \in \mathbb{R}^{N_{\text{lid}} \times h}$
+be the LiDAR token matrix, where $N_{\text{lid}}$ is the number of
+occupied pillar tokens in the same tile.  Each row of
+$\mathbf{T}^{\text{img}}$ is one patch token produced by
+Equation~\eqref{eq:img_token}; each row of $\mathbf{T}^{\text{lid}}$
+is one pillar token produced by Equation~\eqref{eq:lidar_token}.
+
+\paragraph{Scale of the real problem.}
+
+To appreciate why the geometric mask is essential, consider the
+level-12 S2 tile centered on the 7th arrondissement of Paris
+introduced in Table~\ref{tab:tile_example}.  At 0.5\,m pixel
+resolution with patch size $p = 16$, the tile produces
+$N_{\text{img}} = 22{,}500$ image patch tokens from a
+$150 \times 150$ patch grid.  The same tile yields approximately
+$N_{\text{lid}} \approx 180{,}000$ occupied LiDAR pillar tokens
+in a dense urban scene.  The raw attention score matrix
+$\mathbf{Q}^{\text{img}}(\mathbf{K}^{\text{lid}})^T$ would therefore
+contain $22{,}500 \times 180{,}000 \approx 4 \times 10^9$ entries
+before any masking --- a computation that is both memory-intractable
+and semantically wrong, since the vast majority of image patch--pillar
+pairs are not geometrically co-located.  The geometric mask
+$\mathbf{M}_{\mathcal{C}}$ sets all non-aligned entries to $-\infty$,
+so that after softmax they contribute zero weight.  In practice,
+each image patch overlaps only a small number of LiDAR pillars ---
+typically 10--50 for a 8\,m patch at 0.2\,m pillar spacing ---
+reducing the effective attention computation by three to four orders
+of magnitude.
+
+\paragraph{Bidirectional cross-attention.}
+
 \textbf{Image attends to LiDAR (visual queries, geometric values).}
-Image tokens ask: ``What is the 3-D geometry of the scene region I
-am looking at?''
- 
+Each image patch token asks: ``What is the 3D geometry of the scene
+region I am looking at?''  The query, key, and value projections are:
+
 \begin{equation}
   \mathbf{Q}^{\text{img}} = \mathbf{T}^{\text{img}}\,\mathbf{W}^Q,\quad
   \mathbf{K}^{\text{lid}} = \mathbf{T}^{\text{lid}}\,\mathbf{W}^K,\quad
   \mathbf{V}^{\text{lid}} = \mathbf{T}^{\text{lid}}\,\mathbf{W}^V
   \label{eq:img2lid_qkv}
 \end{equation}
- 
+
 \begin{equation}
   \widetilde{\mathbf{T}}^{\text{img}} =
-    \mathrm{softmax}\!\!\left(\frac{\mathbf{Q}^{\text{img}}
-    (\mathbf{K}^{\text{lid}})^T}{\sqrt{d_k}} + \mathbf{M}_{\mathcal{C}}\right)
-    \mathbf{V}^{\text{lid}}
+    \mathrm{softmax}\!\!\left(
+      \frac{\mathbf{Q}^{\text{img}}(\mathbf{K}^{\text{lid}})^T}{\sqrt{d_k}}
+      + \mathbf{M}_{\mathcal{C}}
+    \right)\mathbf{V}^{\text{lid}}
   \label{eq:img2lid_attn}
 \end{equation}
- 
-where $\mathbf{M}_{\mathcal{C}} \in \{0, -\infty\}^{N_{\text{img}} \times N_{\text{lid}}}$
-is the geometric mask (zero for aligned pairs, $-\infty$ for
-non-overlapping pairs, effectively restricting attention to
-geometrically valid correspondences).
- 
+
+where $\mathbf{M}_{\mathcal{C}} \in \{0, -\infty\}^{N_{\text{img}}
+\times N_{\text{lid}}}$ is the geometric mask: entry $(i,j)$ is $0$
+if image patch $i$ and LiDAR pillar $j$ are geometrically aligned
+(i.e.\ pillar $j$ projects into the pixel footprint of patch $i$
+via Equation~\ref{eq:projection}), and $-\infty$ otherwise.
+
 \textbf{LiDAR attends to Image (geometric queries, semantic values).}
-LiDAR tokens ask: ``What is the semantic label of the surface I
-am pointing at?''  This is the symmetric direction:
- 
+Each LiDAR pillar token asks: ``What is the semantic label of the
+surface I am pointing at?''  The symmetric query, key, and value
+projections are:
+
+\begin{equation}
+  \mathbf{Q}^{\text{lid}} = \mathbf{T}^{\text{lid}}\,\mathbf{W}^Q,\quad
+  \mathbf{K}^{\text{img}} = \mathbf{T}^{\text{img}}\,\mathbf{W}^K,\quad
+  \mathbf{V}^{\text{img}} = \mathbf{T}^{\text{img}}\,\mathbf{W}^V
+  \label{eq:lid2img_qkv}
+\end{equation}
+
 \begin{equation}
   \widetilde{\mathbf{T}}^{\text{lid}} =
-    \mathrm{softmax}\!\!\left(\frac{\mathbf{Q}^{\text{lid}}
-    (\mathbf{K}^{\text{img}})^T}{\sqrt{d_k}} + \mathbf{M}_{\mathcal{C}}^T\right)
-    \mathbf{V}^{\text{img}}
+    \mathrm{softmax}\!\!\left(
+      \frac{\mathbf{Q}^{\text{lid}}(\mathbf{K}^{\text{img}})^T}{\sqrt{d_k}}
+      + \mathbf{M}_{\mathcal{C}}^T
+    \right)\mathbf{V}^{\text{img}}
   \label{eq:lid2img_attn}
 \end{equation}
- 
+
+The mask in this direction is $\mathbf{M}_{\mathcal{C}}^T \in
+\{0,-\infty\}^{N_{\text{lid}} \times N_{\text{img}}}$: transposing
+$\mathbf{M}_{\mathcal{C}}$ simply swaps the query and key dimensions,
+so that pillar $j$ is permitted to attend to patch $i$ if and only
+if patch $i$ was permitted to attend to pillar $j$ in the forward
+direction --- the geometric alignment relation is symmetric.
+
 The two enhanced token sequences are concatenated and passed through
-a shared MLP to produce the final geo-spatial embedding:
- 
+a shared MLP to produce the fused geo-spatial embedding:
+
 \begin{equation}
   \mathbf{T}^{\text{geo}} =
-    \mathrm{MLP}\!\left(\left[\widetilde{\mathbf{T}}^{\text{img}}
-    \;\big\|\; \widetilde{\mathbf{T}}^{\text{lid}}\right]\right)
-    \in \mathbb{R}^{N \times h}
+    \mathrm{MLP}\!\left(
+      \left[\widetilde{\mathbf{T}}^{\text{img}}
+      \;\big\|\;
+      \widetilde{\mathbf{T}}^{\text{lid}}\right]
+    \right)
+    \in \mathbb{R}^{(N_{\text{img}} + N_{\text{lid}}) \times h}
   \label{eq:geo_embedding}
 \end{equation}
- 
-\textbf{Intuition.}  Each image patch token, after attending to LiDAR,
-now carries not only the visual appearance of its scene region but also
-its precise 3-D surface geometry.  A lane marking visible in the
-camera image can thereby acquire its exact 3-D elevation from the
-aligned LiDAR pillar.  Conversely, each LiDAR token now carries
-the semantic label (road, sidewalk, vehicle) painted on the 3-D
-point by the aligned camera patch.
+
+where $\|\cdot\|$ denotes row-wise concatenation along the token
+dimension, giving a total of $N_{\text{img}} + N_{\text{lid}}$ fused
+tokens each of dimension $h$.
+
+\paragraph{Toy example: mask construction and masked attention.}
+
+We illustrate the mask mechanism using the lamp post scene from
+Section~\ref{sec:projection}, reduced to a $2 \times 2$ grid of
+4 image patch tokens and 4 LiDAR pillar tokens.  The four image
+patches are arranged as a regular grid covering the scene:
+\begin{itemize}
+  \item $I_{11}$ (top-left): the patch containing pixel
+    $(1{,}277, 580)$ --- the projected location of the lamp post
+    base (from the worked example in Section~\ref{sec:projection})
+  \item $I_{12}$ (top-right): a patch to the right of $I_{11}$,
+    covering the building wall behind the lamp post
+  \item $I_{21}$ (bottom-left): a patch below $I_{11}$, covering
+    the road surface in front of the vehicle
+  \item $I_{22}$ (bottom-right): a patch below $I_{12}$, covering
+    open sky above the roofline
+\end{itemize}
+The four LiDAR pillars are:
+\begin{itemize}
+  \item $L_1$: the lamp post pillar at $(e,n) = (12.4, 3.1)$\,m,
+    which projects to pixel $(1{,}277, 580)$ and falls inside $I_{11}$
+  \item $L_2$: a road surface pillar at $(e,n) = (8.0, 1.5)$\,m,
+    which projects into $I_{21}$
+  \item $L_3$: a building wall pillar at $(e,n) = (15.0, 2.0)$\,m,
+    which is tall enough to project into both $I_{11}$ and $I_{12}$
+  \item $L_4$: a distant tree pillar at $(e,n) = (40.0, 20.0)$\,m,
+    which projects outside all four patches
+\end{itemize}
+
+\noindent The geometric correspondence map $\mathcal{C}$ computed
+from Equation~\eqref{eq:projection} gives the following mask:
+
+\begin{equation}
+  \mathbf{M}_{\mathcal{C}} =
+  \bordermatrix{
+        & L_1      & L_2      & L_3      & L_4      \cr
+    I_{11} & 0        & -\infty  & 0        & -\infty  \cr
+    I_{12} & -\infty  & -\infty  & 0        & -\infty  \cr
+    I_{21} & -\infty  & 0        & 0        & -\infty  \cr
+    I_{22} & -\infty  & -\infty  & -\infty  & -\infty
+  }
+  \label{eq:mask_example}
+\end{equation}
+
+\noindent Row $I_{22}$ is entirely $-\infty$: the sky patch has no
+geometrically aligned LiDAR pillar (no laser pulse returns from
+open sky), so the mask correctly prevents the model from attending
+across modalities for sky pixels.  Row $I_{12}$ (building wall)
+attends only to $L_3$, the pillar whose vertical extent projects
+into the upper-right region of the scene.
+
+Now suppose the raw (unmasked) attention scores
+$\mathbf{Q}^{\text{img}}(\mathbf{K}^{\text{lid}})^T / \sqrt{d_k}$
+for this toy scene are:
+
+\begin{equation}
+  \mathbf{S} =
+  \bordermatrix{
+        & L_1  & L_2  & L_3  & L_4  \cr
+    I_{11} & 2.1  & 0.4  & 1.8  & -0.3 \cr
+    I_{12} & 0.3  & 0.1  & 1.6  &  0.2 \cr
+    I_{21} & 0.6  & 1.9  & 1.4  &  0.2 \cr
+    I_{22} & 0.1  & 0.3  & -0.2 &  0.5
+  }
+  \label{eq:scores_example}
+\end{equation}
+
+Adding $\mathbf{M}_{\mathcal{C}}$ and applying softmax row-wise:
+
+\begin{equation}
+  \mathbf{S} + \mathbf{M}_{\mathcal{C}} =
+  \bordermatrix{
+        & L_1      & L_2      & L_3      & L_4      \cr
+    I_{11} & 2.1      & -\infty  & 1.8      & -\infty  \cr
+    I_{12} & -\infty  & -\infty  & 1.6      & -\infty  \cr
+    I_{21} & -\infty  & 1.9      & 1.4      & -\infty  \cr
+    I_{22} & -\infty  & -\infty  & -\infty  & -\infty
+  }
+\end{equation}
+
+\begin{equation}
+  \mathrm{softmax}(\mathbf{S} + \mathbf{M}_{\mathcal{C}}) =
+  \bordermatrix{
+        & L_1   & L_2   & L_3   & L_4  \cr
+    I_{11} & 0.574 & 0     & 0.426 & 0    \cr
+    I_{12} & 0     & 0     & 1.000 & 0    \cr
+    I_{21} & 0     & 0.623 & 0.377 & 0    \cr
+    I_{22} & 0     & 0     & 0     & 0
+  }
+  \label{eq:softmax_example}
+\end{equation}
+
+Four observations follow directly from
+Equation~\eqref{eq:softmax_example}.  First, patch $I_{11}$ (the
+lamp post region) attends to pillars $L_1$ and $L_3$ with weights
+0.574 and 0.426 respectively --- it acquires 3D geometry from both
+the lamp post itself and the adjacent building wall, weighted by
+their learned similarity to the patch's visual features.  Second,
+patch $I_{12}$ (building wall) attends exclusively to $L_3$ with
+weight 1.000 --- the only geometrically aligned pillar in its
+footprint, so softmax concentrates the full attention weight there.
+Third, patch $I_{21}$ (road surface) attends only to $L_2$ and
+$L_3$ --- the road pillar and the building wall base --- and is
+completely blind to the lamp post pillar $L_1$ whose projection
+falls outside $I_{21}$'s pixel footprint.  Fourth, patch $I_{22}$
+(sky) produces a zero attention output, meaning its enhanced
+representation $\widetilde{\mathbf{T}}^{\text{img}}_{I_{22}}$
+carries no geometric information from LiDAR --- the correct
+behaviour for a region where no 3D surface was measured.  The
+geometric mask has enforced physically consistent cross-modal
+attention at zero additional learned parameters.
+
  
 \begin{figure}[htbp]
   \centering
@@ -10677,274 +11408,496 @@ point by the aligned camera patch.
  
  
 % ------------------------------------------------------------------
-\section{Learning Objectives and HD Map Output Representations}
-\label{sec:learning}
+\section{The Compositional GFM Family}
+\label{sec:compositional_gfm}
 % ------------------------------------------------------------------
 
-The fused geo-spatial embedding $\mathbf{T}^{\text{geo}}$ produced
-by the cross-modal fusion module of Section~\ref{sec:fusion} is the
-backbone representation from which all HD map outputs are derived.
-This section addresses two tightly coupled questions: how should HD
-map outputs be represented so that the model can produce both
-continuous geometry and discrete semantics coherently, and what
-self-supervised objectives should be used to pre-train the backbone
-so that $\mathbf{T}^{\text{geo}}$ encodes the structural priors of
-the physical world --- that visual texture predicts 3D geometry, that
-3D geometry predicts semantic category, and that semantics in one
-tile are consistent with semantics in adjacent tiles.  We address
-the output representation first, since the choice of representation
-directly shapes the design of the pre-training objectives.
+The architecture developed in Sections~\ref{sec:tokenization}
+through~\ref{sec:fusion} was presented in terms of two specific
+sensor modalities --- satellite imagery and ground-vehicle LiDAR ---
+fused through bidirectional cross-attention to produce a geo-spatial
+embedding $\mathbf{T}^{\text{geo}}$.  This two-modality design is
+not, however, the only configuration a geo-spatial foundational model
+can take.  The same universal tokenization backbone supports a much
+richer family of configurations, each combining different input
+modalities to address different map production tasks.  This section
+formalizes that family.
 
 % ------------------------------------------------------------------
-\subsection{HD Map Output Representations}
-\label{sec:vocab}
+\subsection{The Universal Tokenization Backbone}
 % ------------------------------------------------------------------
 
-HD map outputs must simultaneously encode \textbf{continuous
-geometry} (the precise 3D coordinates of lane boundary waypoints,
-sign positions, and surface elevations) and \textbf{discrete
-semantics} (lane type, sign category, regulatory value).  These two
-output types have fundamentally different mathematical structures ---
-one is a regression problem, the other a classification problem ---
-and the choice of output representation has significant consequences
-for how well the model can enforce global consistency across its
-predictions.
-
-\paragraph{Baseline: Separate Task Heads.}
-
-The simplest approach attaches a small task-specific MLP head to the
-shared backbone output for each HD map layer~\cite{li2022hdmapnet}:
+The key insight is that every spatially grounded data source ---
+whether a satellite image patch, a LiDAR pillar, an OSM road segment,
+or a POI record --- can be represented as a token of the same form:
 
 \begin{equation}
-  \hat{\mathbf{y}}_k = \mathrm{MLP}_k\!\left(\mathbf{T}^{\text{geo}}\right),
-  \quad k = 1, \ldots, K
-  \label{eq:task_heads}
+  \mathbf{t}^{(m)}_i =
+    \underbrace{
+      \mathbf{W}^{(m)}_{\text{proj}}\,\phi^{(m)}(x_i)
+    }_{\text{feature value}}
+    +\;
+    \underbrace{
+      \text{pos\_emb}(c_\ell,\, \boldsymbol{\delta}_i)
+    }_{\text{geographic position}}
+    \;\in\; \mathbb{R}^h
+  \label{eq:universal_token}
 \end{equation}
 
-For geometry regression (lane boundaries), $\hat{\mathbf{y}}_k$
-predicts a set of 3D waypoint offsets from each token's S2 anchor.
-For semantic classification (lane type), $\hat{\mathbf{y}}_k$ is a
-logit vector over $C$ categories passed through softmax.  This
-approach is straightforward to implement and train, using a weighted
-multi-task loss $\mathcal{L}_{\text{sup}} = \sum_{k=1}^K
-w_k\,\mathcal{L}_k$ where the weights $w_k$ are tuned so that no
-single task dominates the gradient signal.
+where $m$ indexes the modality, $\phi^{(m)}$ is the
+modality-specific feature extractor that maps the raw data element
+$x_i$ to a feature vector, $\mathbf{W}^{(m)}_{\text{proj}} \in
+\mathbb{R}^{h \times d_m}$ is a learned linear projection to the
+shared hidden dimension $h$, and $\text{pos\_emb}(c_\ell,
+\boldsymbol{\delta}_i)$ is the hierarchical S2 positional embedding
+of Equation~\eqref{eq:pos_emb}.  The positional embedding is
+computed identically for every modality: the geographic coordinates
+of each data element are converted to ECEF via
+Equation~\eqref{eq:ecef}, assigned to an S2 cell at the operating
+level $\ell$, and given an ENU offset $\boldsymbol{\delta}_i$ from
+the cell center.  All tokens live in the same $\mathbb{R}^h$
+embedding space after projection, so the Transformer backbone can
+attend across modalities without any modality-specific modification
+to the attention mechanism.
 
-However, the separate head approach has a fundamental limitation:
-each head operates independently of the others.  The geometry head
-predicting a lane boundary's waypoints has no access to the semantic
-label being predicted by the classification head for that same
-boundary, and vice versa.  More critically, there is no mechanism to
-enforce \textbf{structural consistency} across predictions: the
-geometry head might predict waypoints that form an incoherent scatter
-rather than a smooth polyline, because nothing in the loss function
-penalizes waypoints that are individually accurate but collectively
-disconnected.  For HD map production, where a lane boundary must form
-a geometrically valid, topologically connected structure, this
-independence is a serious limitation.
+The modality distinction is carried entirely by the feature
+projector $\mathbf{W}^{(m)}_{\text{proj}}$ and the feature
+extractor $\phi^{(m)}$, which map fundamentally different raw
+representations --- pixel intensity tensors, LiDAR point
+aggregations, OSM tag embeddings, POI attribute vectors --- into
+the shared space.  No explicit modality type embedding is needed:
+the projected feature values of different modalities are
+sufficiently distinct that the model learns to distinguish them
+from feature content alone.  New modalities are incorporated
+by adding a new feature extractor $\phi^{(m)}$ and projection
+matrix $\mathbf{W}^{(m)}_{\text{proj}}$ without modifying the
+backbone architecture.
 
-\paragraph{Unified Geo-spatial Token Vocabulary.}
-
-A more principled approach --- inspired by GPT's autoregressive
-sequence generation~\cite{brown2020gpt3} --- addresses this
-limitation by encoding both geometry and semantics as a single
-sequence of discrete tokens.  We define a \textbf{geo-spatial token
-vocabulary}:
+Within any GFM configuration, the available input modalities play
+one of two roles.  \textbf{Sensor observations} --- satellite
+imagery tokens $\mathbf{T}^{\text{img}}$ and LiDAR pillar tokens
+$\mathbf{T}^{\text{lid}}$ --- are the primary inputs from which
+the model derives map representations.  These tokens are
+\textbf{partially masked} during pre-training: a fraction
+$\rho_{\text{img}}$ of image patches and a fraction
+$\rho_{\text{lid}}$ of pillars are replaced by a learned
+\texttt{[MASK]} embedding, and the model is trained to reconstruct
+the masked values from unmasked context, learning the statistical
+structure of the physical world without explicit supervision.
+\textbf{Conditioning context} --- Base Map tokens
+$\mathbf{T}^{\text{map}}$ and POI tokens $\mathbf{T}^{\text{poi}}$
+--- encodes structured prior knowledge that is \textbf{never
+masked}.  These tokens are always fully visible, prepended to
+the sensor observation tokens:
 
 \begin{equation}
-  \mathcal{V}_{\text{geo}} =
-    \mathcal{V}_{\text{coord}}
-    \cup \mathcal{V}_{\text{sem}}
-    \cup \mathcal{V}_{\text{struct}}
-  \label{eq:vocab}
+  \text{input sequence} =
+    \Bigl[
+      \underbrace{
+        \mathbf{T}^{\text{map}} \;\big\|\; \mathbf{T}^{\text{poi}}
+      }_{\text{conditioning context: always visible}}
+      \;\Big\|\;
+      \underbrace{
+        \mathbf{T}^{\text{img}}_{\text{masked}}
+        \;\big\|\;
+        \mathbf{T}^{\text{lid}}_{\text{masked}}
+      }_{\text{sensor observations: partially masked}}
+    \Bigr]
+  \label{eq:input_sequence}
 \end{equation}
+
+The conditioning context plays the role of a structural prior: it
+tells the model what is already known about the geographic area
+before the sensor observations are processed, analogous to a system
+prompt in a language model that is always visible and never a
+target for reconstruction.  When a Base Map is available, the model
+does not need to rediscover road topology from raw sensor data ---
+it can focus its capacity on the finer-grained details that sensor
+observations provide.  When no prior map exists --- as in
+data-sparse regions where neither OSM coverage nor POI data is
+available --- the conditioning context is simply empty and the
+model operates on sensor observations alone, which is a degenerate
+special case of Equation~\eqref{eq:input_sequence} with
+$\mathbf{T}^{\text{map}}$ and $\mathbf{T}^{\text{poi}}$ absent.
+
+% ------------------------------------------------------------------
+\subsection{Tokenizing the Conditioning Context}
+% ------------------------------------------------------------------
+\label{sec:conditioned-context}
+Satellite imagery and LiDAR tokenization were developed in
+Section~\ref{sec:tokenization}.  We now describe how Base Map and
+POI data are tokenized using the same universal backbone
+(Equation~\ref{eq:universal_token}).
+
+\paragraph{Base Map tokenization.}
+
+An OSM Base Map tile contains three geometric primitive types ---
+nodes, ways, and relations --- each requiring a different feature
+extractor $\phi^{(m)}$ while sharing the same S2 positional
+embedding procedure.
+
+\textbf{Nodes} are point features.  Each node's geodetic
+coordinates $(\phi, \lambda)$ are converted to ECEF and assigned
+to an S2 cell exactly as for a LiDAR pillar center.  The feature
+extractor aggregates the node's OSM tag attributes via a learned
+embedding table $\mathbf{E}_{\text{tag}} \in \mathbb{R}^{|\mathcal{T}|
+\times d_{\text{tag}}}$ over the vocabulary $\mathcal{T}$ of OSM
+key-value tag pairs (e.g.\ \texttt{tourism=attraction},
+\texttt{amenity=cafe}):
+\begin{equation}
+  \phi^{(\text{node})}(x_i) =
+    \frac{1}{T}\sum_{j=1}^{T} \mathbf{E}_{\text{tag}}(t_j)
+    \;\in\; \mathbb{R}^{d_{\text{tag}}}
+  \label{eq:node_feature}
+\end{equation}
+where $t_1, \ldots, t_T$ are the node's tags.  One node produces
+one token.
+
+\textbf{Ways} are spatially extended and cannot be represented as
+a single token.  Each way is sampled at a regular arc-length
+interval $\Delta s$ --- matched to the operating S2 level so that
+each waypoint falls in a distinct S2 cell --- producing one token
+per waypoint.  The feature extractor at waypoint $k$ concatenates
+the tag embedding aggregate with the waypoint's normalized
+arc-length position $s_k/L \in [0,1]$ along the way, its local
+heading angle $\theta_k$, and its local curvature $\kappa_k$:
+\begin{equation}
+  \phi^{(\text{way})}_k(x) =
+    \Bigl[
+      \tfrac{1}{T}{\textstyle\sum_j} \mathbf{E}_{\text{tag}}(t_j)
+      \;\big\|\;
+      s_k/L
+      \;\big\|\;
+      \theta_k
+      \;\big\|\;
+      \kappa_k
+    \Bigr]
+  \label{eq:way_feature}
+\end{equation}
+The heading and curvature encode the road's local shape in a
+representation that is compact and invariant to the overall
+orientation of the road in the tile.
+
+\textbf{Relations} are tokenized as the union of their member way
+tokens.  Each member waypoint token's feature vector is augmented
+with the relation's own tag embedding and a learned role embedding
+$\mathbf{e}_{\text{role}}$ (encoding \texttt{outer},
+\texttt{inner}, \texttt{stop}, etc.):
+\begin{equation}
+  \phi^{(\text{rel})}_k(x) =
+    \Bigl[
+      \phi^{(\text{way})}_k(x)
+      \;\big\|\;
+      \tfrac{1}{T}{\textstyle\sum_j} \mathbf{E}_{\text{tag}}(t^{\text{rel}}_j)
+      \;\big\|\;
+      \mathbf{e}_{\text{role}}
+    \Bigr]
+  \label{eq:rel_feature}
+\end{equation}
+
+\paragraph{POI tokenization.}
+
+A POI record is a point feature whose geographic coordinates map
+directly to one S2 cell and one token.  The feature extractor
+combines four attribute types:
 
 \begin{itemize}
-\item $\mathcal{V}_{\text{coord}}$: quantized coordinate tokens, one
-  per S2 cell ID at the operating resolution, encoding the geodetic
-  position of each geometric primitive.
+  \item \textbf{Category}: encoded via a learned embedding table
+    $\mathbf{E}_{\text{cat}} \in \mathbb{R}^{|\mathcal{C}|
+    \times d_{\text{cat}}}$ over the POI category vocabulary
+    $\mathcal{C}$.
 
-\item $\mathcal{V}_{\text{sem}}$: semantic label tokens
-  (\texttt{LANE\_SOLID}, \texttt{LANE\_DASHED}, \texttt{STOP\_SIGN},
-  \texttt{CROSSWALK}, \ldots) encoding the category of each feature.
+  \item \textbf{Scalar attributes}: rating, log-scaled review
+    count, and price level, normalized to $[0,1]$ and encoded
+    by a small MLP.
 
-\item $\mathcal{V}_{\text{struct}}$: structural delimiter tokens
-  (\texttt{[START\_POLY]}, \texttt{[END\_POLY]},
-  \texttt{[START\_LINE]}, \texttt{[END\_LINE]}, \ldots) encoding the
-  boundaries between geometric primitives.
+  \item \textbf{Temporal attributes}: opening hours encoded as
+    a 168-dimensional binary vector (one bit per hour of the
+    week) and projected by a learned linear layer.
+
+  \item \textbf{Name}: the POI name string encoded via the
+    model's own text embedding layer, which carries implicit
+    semantic content learned during pre-training --- the model
+    already associates \emph{Café de Flore} with a historic
+    Parisian café, \emph{Hôpital Necker} with a children's
+    hospital, and so on.
 \end{itemize}
 
-In this representation, a solid lane boundary with two waypoints is
-encoded as a single token sequence:
+The four components are concatenated to form the POI feature
+vector $\phi^{(\text{poi})}(x_i) \in \mathbb{R}^{d_{\text{poi}}}$,
+which is then projected to $\mathbb{R}^h$ by
+$\mathbf{W}^{(\text{poi})}_{\text{proj}}$ via
+Equation~\eqref{eq:universal_token}.
 
-\begin{verbatim}
-[START_LINE] [LANE_SOLID]
-  [cell:1234567] [offset:(2.31, 0.14, -0.02)]
-  [cell:1234568] [offset:(2.31, 0.19, -0.02)]
-[END_LINE]
-\end{verbatim}
+% ------------------------------------------------------------------
+\subsection{A Taxonomy of GFM Configurations}
+% ------------------------------------------------------------------
 
-The semantic label \texttt{LANE\_SOLID} appears immediately after the
-structural delimiter \texttt{[START\_LINE]}, so the model predicts
-the geometry of a lane boundary \emph{conditioned on} already knowing
-its semantic type --- the independence problem of separate heads is
-eliminated by construction.  Each coordinate token references an S2
-cell ID followed by a sub-cell ENU offset $\boldsymbol{\delta} \in
-\mathbb{R}^3$, encoding the waypoint's position to centimeter
-precision using the hierarchical token design of
-Equation~\eqref{eq:token_design}.  The representation is flexible: a
-lane segment with 100 waypoints uses 100 coordinate tokens; a short
-stopline uses 2; a complex intersection polygon uses as many tokens
-as it has vertices.  The model is trained with teacher-forced
-next-token prediction using a standard cross-entropy objective,
-enabling autoregressive generation of complete HD map features for
-previously unseen regions~\cite{liao2022maptr}.  The remainder of
-this chapter assumes the unified vocabulary representation.
+With the universal tokenization backbone established, a rich family
+of GFM configurations emerges by varying which modalities serve as
+sensor observations and which serve as conditioning context.
+Table~\ref{tab:gfm_types} summarizes the practically important
+configurations.
 
-\begin{figure}[htbp]
+\begin{table}[htbp]
   \centering
-  \includegraphics[width=0.82\textwidth]{images/hd_map_layers.png}
-  \caption{HD map semantic layers overlaid on a road scene.
-    Each layer uses a distinct color: lane boundaries (blue
-    polylines), road markings (green fill), traffic signs (red 3-D
-    bounding boxes), crosswalks (yellow polygons).  The model
-    predicts all layers simultaneously from the fused geo-spatial
-    embedding $\mathbf{T}^{\text{geo}}$, generating them as a single
-    interleaved token sequence from the unified vocabulary
-    $\mathcal{V}_{\text{geo}}$.}
-  \label{fig:hd_map_layers}
-\end{figure}
+  \caption{Representative configurations of the compositional GFM
+    family.  Sensor observations are partially masked during
+    pre-training; conditioning context is always fully visible.
+    All configurations share the same universal tokenization
+    backbone and Transformer architecture; they differ only in
+    which modalities are present and in the SFT output head.}
+  \label{tab:gfm_types}
+  \renewcommand{\arraystretch}{1.25}
+  \begin{tabular}{p{1.2cm} p{3.6cm} p{2.8cm} p{2.2cm} p{1.8cm}}
+    \hline
+    \textbf{Type} &
+    \textbf{Sensor observations} &
+    \textbf{Conditioning context} &
+    \textbf{Output} &
+    \textbf{Accuracy} \\
+    \hline
+    1 &
+    Satellite imagery &
+    None &
+    Base Map &
+    Metre-level \\
+
+    2 &
+    Satellite imagery + ground LiDAR &
+    None &
+    HD Map &
+    Centimetre-level \\
+
+    3 &
+    Satellite imagery &
+    Base Map &
+    Updated Base Map &
+    Metre-level \\
+
+    4 &
+    Satellite imagery + ground LiDAR &
+    Base Map &
+    HD Map &
+    Centimetre-level \\
+
+    5 &
+    Satellite imagery &
+    POI data &
+    Base Map &
+    Metre-level \\
+
+    6 &
+    Satellite imagery + ground LiDAR &
+    Base Map + POI &
+    HD Map &
+    Centimetre-level \\
+    \hline
+  \end{tabular}
+\end{table}
+
+Several observations follow from Table~\ref{tab:gfm_types}.
+
+\textbf{Type 1 vs Type 3.}  Both produce a Base Map from satellite
+imagery, but Type~3 conditions on an existing Base Map.  Type~3 is
+therefore not building a map from scratch --- it is asking: given
+what we already know about this area, what has changed and what
+needs updating?  This is a substantially easier problem than Type~1
+and should yield higher-accuracy updates with less SFT data.
+Type~3 is the natural configuration for map freshness and
+maintenance tasks, where a high-quality Base Map already exists
+but may be months or years out of date.
+
+\textbf{Type 2 vs Type 4.}  The addition of Base Map conditioning
+in Type~4 dramatically narrows the search space for the HD Map
+decoder.  Instead of inferring road topology from LiDAR geometry
+alone, the model is told where the roads are and can concentrate
+its capacity on resolving lane-level detail --- the
+centimetre-accurate positions of lane boundaries, stop lines, and
+sign faces that the Base Map does not encode.  Type~4 is the most
+commercially important configuration for autonomous driving HD
+map production, because high-quality global Base Maps already
+exist (OSM) while centimetre-accurate HD Maps do not.
+
+\textbf{Type 5.}  POI data resolves semantic ambiguities that
+satellite imagery alone cannot.  Two buildings that are visually
+indistinguishable from above --- same footprint, same roof texture,
+same size --- may be a school and a factory, implying completely
+different road network attributes (school zones, pedestrian
+crossings, speed limits versus heavy vehicle access routes).  POI
+conditioning provides this semantic disambiguation at no additional
+sensor cost, making Type~5 particularly valuable for Base Map
+attribute prediction in data-sparse regions where ground-survey
+verification is not feasible.
+
+\textbf{Type 6.}  The richest configuration combines all available
+information: fresh satellite imagery and ground LiDAR as sensor
+observations, conditioned on existing Base Map topology and POI
+semantics.  This configuration most closely mirrors real-world HD
+map production pipelines, where prior map knowledge is routinely used to guide and
+constrain the automated extraction of lane-level detail.
+
+The table is illustrative rather than exhaustive.  The
+compositional framework supports any combination of the available
+modalities --- for example, aerial LiDAR as a sensor observation
+for DEM production, or street-level imagery as an additional
+observation stream for façade-level semantic enrichment.  Any new
+modality is incorporated by adding a modality-specific feature
+extractor $\phi^{(m)}$ and projection matrix
+$\mathbf{W}^{(m)}_{\text{proj}}$ without modifying the backbone
+Transformer architecture.
 
 % ------------------------------------------------------------------
-\subsection{Within-Modality Masked Reconstruction}
+\section{Self-Supervised Pre-training Objectives}
+\label{sec:pretraining_objectives}
 % ------------------------------------------------------------------
 
-As a warm-up pre-training objective, we apply standard masked
-autoencoding within each modality separately.
+The pre-training objectives force the backbone to learn the deep
+structural priors of the physical world from raw sensor data alone,
+without any map annotation.  All five objectives operate on the
+sensor observation tokens --- image patches and LiDAR pillars ---
+conditioned on whatever conditioning context tokens are present.
+The conditioning context tokens $\mathbf{T}^{\text{map}}$ and
+$\mathbf{T}^{\text{poi}}$ are never targets for reconstruction;
+they are always fully visible inputs that the model may freely
+attend to when reconstructing masked sensor observations.
 
-\textbf{Image MAE.}  A fraction $\rho_{\text{img}}$ of image patches
-are masked (their token values set to a learned \texttt{[MASK]}
-embedding) and the model is trained to reconstruct the masked pixel
+\paragraph{Within-modality masked reconstruction.}
+
+As a warm-up objective, standard masked autoencoding is applied
+within each sensor modality separately.
+
+\textbf{Image MAE.}  A fraction $\rho_{\text{img}}$ of image
+patches are masked and the model reconstructs the masked pixel
 values~\cite{he2022masked}:
 
 \begin{equation}
   \mathcal{L}_{\text{img}} =
     \mathbb{E}\!\left[\,\bigl\|
       \mathrm{Dec}_{\text{img}}
-        \bigl(\mathrm{Enc}(\mathcal{I}_{2D},\; \mathcal{M}_{\text{img}})\bigr)
+        \bigl(\mathrm{Enc}(\mathcal{I}_{2D},\;
+        \mathcal{M}_{\text{img}})\bigr)
       - \mathcal{I}_{2D,\mathcal{M}}
     \bigr\|^2\right]
   \label{eq:mae_img}
 \end{equation}
 
-\textbf{LiDAR MAE.}  A fraction $\rho_{\text{lid}}$ of pillars are
-masked and the model reconstructs the masked pillar centroid
+\textbf{LiDAR MAE.}  A fraction $\rho_{\text{lid}}$ of pillars
+are masked and the model reconstructs the masked pillar centroid
 positions~\cite{min2022mae3d,pang2022masked}:
 
 \begin{equation}
   \mathcal{L}_{\text{lid}} =
     \mathbb{E}\!\left[\,\bigl\|
       \mathrm{Dec}_{\text{lid}}
-        \bigl(\mathrm{Enc}(P,\; \mathcal{M}_{\text{lid}})\bigr)
+        \bigl(\mathrm{Enc}(P,\;
+        \mathcal{M}_{\text{lid}})\bigr)
       - P_{\mathcal{M}}
     \bigr\|^2\right]
   \label{eq:mae_lid}
 \end{equation}
 
-These two objectives warm-start each encoder independently before
-cross-modal training begins, ensuring that each modality's
-representations are meaningful before they are asked to align with
-the other.
+These two objectives warm-start each encoder independently
+before cross-modal training begins, ensuring that each
+modality's representations are meaningful before they are
+asked to align with the other.
 
-% ------------------------------------------------------------------
-\subsection{Cross-Modal Reconstruction: Predicting 3-D from 2-D}
-% ------------------------------------------------------------------
+\paragraph{Cross-modal reconstruction.}
 
-The most powerful pre-training objective forces the model to infer
-\emph{one modality from the other}.  We mask the \emph{entire} LiDAR
-stream for a given tile and challenge the model to reconstruct the
-masked 3D geometry using only the 2D satellite
+The most powerful pre-training objective forces the model to
+infer one modality from the other.  We mask the \emph{entire}
+LiDAR stream for a given tile and challenge the model to
+reconstruct the masked 3D geometry using only the 2D satellite
 imagery~\cite{liu2023geomae}:
 
 \begin{equation}
   \mathcal{L}_{\text{geo}} =
     \mathbb{E}\!\left[\,\bigl\|
       \mathrm{Dec}_{3D}
-        \bigl(\mathrm{Enc}(\mathcal{I}_{2D},\; \mathrm{Mask}(P))\bigr)
+        \bigl(\mathrm{Enc}(\mathcal{I}_{2D},\;
+        \mathrm{Mask}(P))\bigr)
       - P
     \bigr\|^2\right]
   \label{eq:cross_modal_loss}
 \end{equation}
 
-This is a demanding objective.  To reconstruct $P$ from
-$\mathcal{I}_{2D}$ alone, the model must internalize physical priors:
-a sharp linear shadow at a road edge implies a curb of $\approx$15 cm
-height; the gray tone of asphalt implies a flatter surface than
-cobblestones; a cluster of pixels matching the spectral signature of
-white road paint implies a thin, flat polygon at road surface
-elevation.  These are precisely the priors a map-making expert would
-apply when interpreting aerial imagery --- the pre-training objective
-forces the model to learn them from data alone.
+To reconstruct $P$ from $\mathcal{I}_{2D}$ alone the model
+must internalize physical priors: a sharp linear shadow at a
+road edge implies a curb of $\approx$15\,cm height; the
+spectral signature of asphalt implies a flatter surface than
+cobblestones; a cluster of pixels matching the spectral
+signature of white road paint implies a thin flat polygon at
+road surface elevation.  These are precisely the priors a
+cartographic expert applies when interpreting aerial imagery
+--- the pre-training objective forces the model to learn them
+from data alone.
 
-The symmetric objective reconstructs satellite imagery from LiDAR
-geometry:
+When conditioning context is present, this objective becomes
+substantially easier: a Base Map token indicating a road edge
+at a given S2 cell provides strong prior information about
+where a curb is likely to be, and the model concentrates its
+reconstruction effort on confirming and refining that prior
+rather than discovering it from scratch.
+
+The symmetric objective reconstructs satellite imagery from
+LiDAR geometry:
 
 \begin{equation}
   \mathcal{L}_{\text{sem}} =
     \mathbb{E}\!\left[\,\bigl\|
       \mathrm{Dec}_{2D}
-        \bigl(\mathrm{Enc}(\mathrm{Mask}(\mathcal{I}_{2D}),\; P)\bigr)
+        \bigl(\mathrm{Enc}(\mathrm{Mask}(\mathcal{I}_{2D}),\;
+        P)\bigr)
       - \mathcal{I}_{2D}
     \bigr\|^2\right]
   \label{eq:cross_modal_sym}
 \end{equation}
 
-This forces the model to learn the inverse priors: given a 3D curb
-profile, predict the visual appearance --- shadow angle, color
-transition, spectral signature --- that this curb produces in
-satellite imagery.
+This forces the model to learn the inverse priors: given a 3D
+curb profile, predict the visual appearance --- shadow angle,
+colour transition, spectral signature --- that this curb
+produces in satellite imagery.
 
-% ------------------------------------------------------------------
-\subsection{Contrastive Cross-Modal Alignment}
-% ------------------------------------------------------------------
+\paragraph{Contrastive cross-modal alignment.}
 
-Beyond reconstruction, we want the model's embedding space to be
-geometrically aligned across modalities: two tokens encoding the same
-physical location should have similar embeddings regardless of whether
-they came from the image stream or the LiDAR stream.  This is the
-geo-spatial analog of CLIP's image-text contrastive
-alignment~\cite{radford2021clip}.
+Beyond reconstruction, the model's embedding space should be
+geometrically aligned across modalities: two tokens encoding
+the same physical location should have similar embeddings
+regardless of whether they came from the image stream or the
+LiDAR stream.
 
 For a batch of $N$ tiles, let $\mathbf{z}^{\text{img}}_i$ and
-$\mathbf{z}^{\text{lid}}_i$ be the $\ell_2$-normalized pooled
-embeddings (mean over tokens) of tile $i$ from each stream.  The
-contrastive loss is~\cite{radford2021clip,chen2020simclr}:
+$\mathbf{z}^{\text{lid}}_i$ be the $\ell_2$-normalised pooled
+embeddings (mean over tokens) of tile $i$ from each stream.
+The contrastive loss is~\cite{radford2021clip,chen2020simclr}:
 
 \begin{equation}
   \mathcal{L}_{\text{align}} =
     -\frac{1}{N}\sum_{i=1}^{N}
     \log \frac{
-      \exp\!\bigl(\mathbf{z}^{\text{img}}_i \cdot \mathbf{z}^{\text{lid}}_i / \tau\bigr)
+      \exp\!\bigl(
+        \mathbf{z}^{\text{img}}_i \cdot
+        \mathbf{z}^{\text{lid}}_i / \tau
+      \bigr)
     }{
       \sum_{j=1}^{N}
-      \exp\!\bigl(\mathbf{z}^{\text{img}}_i \cdot \mathbf{z}^{\text{lid}}_j / \tau\bigr)
+      \exp\!\bigl(
+        \mathbf{z}^{\text{img}}_i \cdot
+        \mathbf{z}^{\text{lid}}_j / \tau
+      \bigr)
     }
   \label{eq:contrastive}
 \end{equation}
 
-where $\tau$ is a learnable temperature parameter.  The numerator
-rewards high similarity between matching pairs (same tile, different
-modality); the denominator penalizes high similarity to any
-non-matching LiDAR tile.  A well-trained model achieves near-perfect
-tile retrieval: given an aerial photograph, it can identify the LiDAR
-scan of the same location from a database of millions.
+where $\tau$ is a learnable temperature parameter.  The
+numerator rewards high similarity between matching tile pairs
+(same location, different modality); the denominator penalizes
+high similarity to non-matching tiles.
 
-% ------------------------------------------------------------------
-\subsection{The Combined Pre-training Objective}
-% ------------------------------------------------------------------
+\paragraph{The combined pre-training objective.}
 
-The full pre-training objective is a weighted combination of all five
-losses:
+The full pre-training objective is a weighted combination of
+all five losses:
 
 \begin{equation}
   \mathcal{L}_{\text{total}} =
@@ -10956,583 +11909,690 @@ losses:
   \label{eq:total_loss}
 \end{equation}
 
-In practice, $\lambda_3$ (cross-modal 3D reconstruction) is given
-the highest weight because it is the objective most directly aligned
-with the downstream task of HD map generation.
-$\mathcal{L}_{\text{align}}$ is given the second-highest weight to
-enforce embedding alignment, which is critical for zero-shot
-retrieval and transfer to unseen geographies.  The within-modality
-losses $\mathcal{L}_{\text{img}}$ and $\mathcal{L}_{\text{lid}}$
-receive lower weights, serving primarily to stabilize training in the
-early warm-up phase before the cross-modal objectives dominate.
+$\lambda_3$ (cross-modal 3D reconstruction) receives the
+highest weight because it is the objective most directly
+aligned with the downstream task of map geometry prediction.
+$\mathcal{L}_{\text{align}}$ receives the second-highest
+weight to enforce embedding alignment, which is critical for
+zero-shot transfer to unseen geographies.  The within-modality
+losses $\mathcal{L}_{\text{img}}$ and
+$\mathcal{L}_{\text{lid}}$ receive lower weights, serving
+primarily to stabilise training in the early warm-up phase
+before the cross-modal objectives dominate.
 
 \begin{algorithm}[H]
   \caption{GFM Pre-training Step (single batch)}
   \label{alg:pretraining}
   \begin{algorithmic}[1]
-    \Require Batch of $B$ tile pairs
-      $\{(\mathcal{I}^{(b)}_{2D}, P^{(b)})\}_{b=1}^B$;
+    \Require Batch of $B$ tile tuples
+      $\{(\mathcal{I}^{(b)}_{2D},\;
+          P^{(b)},\;
+          \mathbf{T}^{\text{map},(b)},\;
+          \mathbf{T}^{\text{poi},(b)})\}_{b=1}^B$;
       masking ratios $\rho_{\text{img}}, \rho_{\text{lid}}$;
       loss weights $\lambda_1,\ldots,\lambda_5$
     \For{$b = 1$ to $B$}
       \State Convert tile coordinates to ECEF via
         Equation~\eqref{eq:ecef}
-      \State Assign each point / pixel to S2 level-12 cell;
-        compute ENU offset $\boldsymbol{\delta}$
+      \State Tokenize $\mathbf{T}^{\text{map},(b)}$ and
+        $\mathbf{T}^{\text{poi},(b)}$ via
+        Section \ref{sec:conditioned-context}
       \State Pillarize $P^{(b)}$ via
-        Equation~\eqref{eq:pillar} $\to \mathbf{T}^{\text{lid}}$
+        Equation~\eqref{eq:pillar}
+        $\to \mathbf{T}^{\text{lid}}$
       \State Patchify $\mathcal{I}^{(b)}_{2D}$
         $\to \mathbf{T}^{\text{img}}$
       \State Add positional embeddings
-        (Equation~\eqref{eq:pos_emb}) to both streams
+        (Equation~\eqref{eq:pos_emb}) to all token streams
+      \State Assemble input sequence
+        (Equation~\eqref{eq:input_sequence})
       \State Sample masks $\mathcal{M}_{\text{img}},
         \mathcal{M}_{\text{lid}}$ with ratios
         $\rho_{\text{img}}, \rho_{\text{lid}}$
+        on sensor observation tokens only
       \State Compute $\widetilde{\mathbf{T}}^{\text{img}}$,
-        $\widetilde{\mathbf{T}}^{\text{lid}}$ via cross-attention
+        $\widetilde{\mathbf{T}}^{\text{lid}}$ via
+        cross-attention
         (Equations~\eqref{eq:img2lid_attn},
         \eqref{eq:lid2img_attn})
       \State Compute fused embedding $\mathbf{T}^{\text{geo}}$
         via Equation~\eqref{eq:geo_embedding}
       \State Decode masked patches
-        $\to \mathcal{L}_{\text{img}}$ (Eq.~\eqref{eq:mae_img})
+        $\to \mathcal{L}_{\text{img}}$
+        (Eq.~\eqref{eq:mae_img})
       \State Decode masked pillars
-        $\to \mathcal{L}_{\text{lid}}$ (Eq.~\eqref{eq:mae_lid})
+        $\to \mathcal{L}_{\text{lid}}$
+        (Eq.~\eqref{eq:mae_lid})
       \State Decode full $P^{(b)}$ from image-only encoding
-        $\to \mathcal{L}_{\text{geo}}$ (Eq.~\eqref{eq:cross_modal_loss})
-      \State Decode full $\mathcal{I}^{(b)}_{2D}$ from LiDAR-only encoding
-        $\to \mathcal{L}_{\text{sem}}$ (Eq.~\eqref{eq:cross_modal_sym})
+        $\to \mathcal{L}_{\text{geo}}$
+        (Eq.~\eqref{eq:cross_modal_loss})
+      \State Decode full $\mathcal{I}^{(b)}_{2D}$ from
+        LiDAR-only encoding
+        $\to \mathcal{L}_{\text{sem}}$
+        (Eq.~\eqref{eq:cross_modal_sym})
       \State Compute tile embeddings; contrastive loss
-        $\to \mathcal{L}_{\text{align}}$ (Eq.~\eqref{eq:contrastive})
+        $\to \mathcal{L}_{\text{align}}$
+        (Eq.~\eqref{eq:contrastive})
     \EndFor
-    \State Update: $\nabla_\theta\bigl[\lambda_1\mathcal{L}_{\text{img}}
-      + \lambda_2\mathcal{L}_{\text{lid}} + \lambda_3\mathcal{L}_{\text{geo}}
-      + \lambda_4\mathcal{L}_{\text{sem}} +
-      \lambda_5\mathcal{L}_{\text{align}}\bigr]$
+    \State Update:
+      $\nabla_\theta\bigl[
+        \lambda_1\mathcal{L}_{\text{img}}
+        + \lambda_2\mathcal{L}_{\text{lid}}
+        + \lambda_3\mathcal{L}_{\text{geo}}
+        + \lambda_4\mathcal{L}_{\text{sem}}
+        + \lambda_5\mathcal{L}_{\text{align}}
+      \bigr]$
   \end{algorithmic}
 \end{algorithm}
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=0.88\textwidth]{images/gfm_pretraining.png}
-  \caption{The five self-supervised pre-training objectives for the
-    GFM.  Within-modality losses (top left and right) warm-start
-    each encoder independently.  Cross-modal reconstruction losses
-    (center arrows) force the model to learn inter-modality
-    structural priors.  The contrastive alignment loss (bottom)
-    aligns the embedding spaces of both streams into a shared
-    geo-spatial representation.}
+  \caption{The five self-supervised pre-training objectives for
+    the GFM.  Within-modality losses (top left and right)
+    warm-start each encoder independently.  Cross-modal
+    reconstruction losses (centre arrows) force the model to
+    learn inter-modality structural priors.  The contrastive
+    alignment loss (bottom) aligns the embedding spaces of
+    both streams.  Conditioning context tokens (Base Map, POI)
+    are prepended to the input sequence and are never masked
+    or reconstructed.}
   \label{fig:pretraining_objectives}
 \end{figure}
 
- 
 % ------------------------------------------------------------------
-\section{Change Detection and Temporal Fusion}
+\section{Supervised Fine-Tuning for Map Generation}
+\label{sec:sft-map-generation}
 % ------------------------------------------------------------------
- 
-A freshly minted HD map begins to decay the moment survey vehicles
-leave the road.  Road crews repave surfaces, construction barriers
-appear overnight, traffic signs are replaced, new buildings rise.
-A geo-spatial foundational model must not only \emph{build} maps from
-sensor data but also \emph{maintain} them by detecting discrepancies
-between an existing archived map and fresh observations~\cite{alcantarilla2018street}.
- 
-\subsection{Formalizing the Change Detection Problem}
- 
-Let $\mathcal{M}_t$ denote the HD map at time $t$ and
-$\mathcal{O}_{t'}$ a new sensor observation (image + LiDAR tile) at
-time $t' > t$.  For each S2 tile $\mathbf{x}$, the archived map
-provides a historical geo-spatial embedding
-$\mathbf{T}^{\text{geo}}_t(\mathbf{x})$ and the new observation
-provides a current embedding
-$\mathbf{T}^{\text{geo}}_{t'}(\mathbf{x})$.  We define the tile-level
-\textbf{map discrepancy} as the $L_2$ distance between these
-embeddings:
- 
-\begin{equation}
-  \Delta(\mathcal{M}_t,\, \mathcal{O}_{t'})(\mathbf{x})
-  = \bigl\|
-      \mathbf{T}^{\text{geo}}_{t'}(\mathbf{x})
-      - \mathbf{T}^{\text{geo}}_t(\mathbf{x})
-    \bigr\|_2
-  \label{eq:discrepancy}
-\end{equation}
- 
-Tiles where $\Delta$ exceeds a threshold $\epsilon$ are flagged for
-human review or automatic re-mapping.  This formulation is elegant
-because it requires no explicit comparison of map features: the
-backbone has already distilled each tile's geometry and semantics
-into a single embedding vector, and the $L_2$ distance in embedding
-space reflects meaningful physical change.
- 
-\subsection{Temporal Token Pairs and the Change Detection Head}
- 
-For fine-grained token-level change detection, the model processes a
-\textbf{temporal pair}: the historical and current token sequences for
-the same tile are concatenated along the sequence dimension~\cite{chen2021changeformer}:
- 
-\begin{equation}
-  \mathbf{T}^{\text{temporal}} =
-    \bigl[\mathbf{T}^{\text{geo}}_t \;\big\|\;
-    \mathbf{T}^{\text{geo}}_{t'}\bigr]
-    \in \mathbb{R}^{2N \times h}
-  \label{eq:temporal_pair}
-\end{equation}
- 
-A change detection head operates on corresponding historical--current
-token pairs:
- 
-\begin{equation}
-  s_i = \sigma\!\left(\mathbf{w}_{cd}^T\bigl[
-    \mathbf{T}^{\text{geo}}_{t,i} - \mathbf{T}^{\text{geo}}_{t',i}
-    \;\big\|\;
-    \mathbf{T}^{\text{geo}}_{t,i} \odot \mathbf{T}^{\text{geo}}_{t',i}
-  \bigr]\right)
-  \label{eq:change_head}
-\end{equation}
- 
-where $\sigma$ is the sigmoid function, $\odot$ is element-wise
-multiplication, and $\mathbf{w}_{cd} \in \mathbb{R}^{2h}$ is a
-learned weight vector.  The \textbf{difference term}
-$\mathbf{T}^{\text{geo}}_{t,i} - \mathbf{T}^{\text{geo}}_{t',i}$
-detects features that changed sign or magnitude---useful for
-detecting surface repaving (elevation changes) or lane repainting
-(semantic changes).  The \textbf{product term}
-$\mathbf{T}^{\text{geo}}_{t,i} \odot \mathbf{T}^{\text{geo}}_{t',i}$
-detects features that are correlated---useful for detecting systematic
-shifts (the whole road shifted, not just one feature).
- 
-\subsection{Focal Loss for Imbalanced Change Detection}
- 
-Change detection is a highly imbalanced classification problem: in
-any given observation pair, 95--99\% of map tokens are unchanged.
-Standard binary cross-entropy would allow the model to achieve 98\%
-accuracy by always predicting ``no change''---useless in practice.
- 
-We address this with the \textbf{Focal Loss}~\cite{lin2017focal}, a
-modification of binary cross-entropy that down-weights easy negative
-(unchanged) examples and focuses learning on hard, uncertain examples:
- 
-\begin{equation}
-  \mathcal{L}_{\text{focal}} =
-    -\frac{1}{N}\sum_{i=1}^{N}\Bigl[
-      (1 - s_i)^\gamma y_i \log s_i
-      + s_i^\gamma (1 - y_i)\log(1 - s_i)
-    \Bigr]
-  \label{eq:focal_loss}
-\end{equation}
- 
-where $y_i \in \{0,1\}$ is the ground-truth change label and
-$\gamma > 0$ (typically $\gamma = 2$) is the focusing parameter.
-When a changed token has low predicted score $s_i \approx 0$, the
-factor $(1-s_i)^\gamma \approx 1$ and the loss is large---the model
-is penalized strongly.  When an unchanged token has high predicted
-score $s_i \approx 0$, the factor $s_i^\gamma \approx 0$ and the
-loss contribution is negligible---the model is not distracted by
-the easy negatives.  This forces the model to allocate its capacity
-to the genuinely ambiguous boundaries between changed and unchanged
-regions.
- 
-\begin{figure}[htbp]
-  \centering
-  \includegraphics[width=0.85\textwidth]{images/temporal_fusion_change.png}
-  \caption{Temporal fusion for map change detection.
-    \emph{(Top)} Historical map tile (left, time $t$) and fresh
-    observation (right, time $t'$).  \emph{(Bottom)} Per-token
-    change score map: red tokens indicate high change probability
-    (a new construction barrier and repaved surface); blue tokens
-    indicate no change.}
-  \label{fig:change_detection}
-\end{figure}
- 
-% ------------------------------------------------------------------
-\section{Evaluation Metrics for Geo-spatial Models}
-% ------------------------------------------------------------------
- 
-Consistent with the evaluation philosophy established in Chapter~3,
-geo-spatial model quality cannot be captured by a single number.
-We require a suite of metrics organized by the four output types
-introduced in Table~\ref{tab:hd_map_layers}.
 
-\begin{table}[htbp]
-  \centering
-  \caption{HD Map semantic layers, their geometric representations,
-    and output types required.}
-  \label{tab:hd_map_layers}
-  \begin{tabular}{l l l}
-    \hline
-    \textbf{Layer}        & \textbf{Representation}      & \textbf{Output} \\
-    \hline
-    Lane boundaries       & 3-D polylines                & geometry regression \\
-    Lane type             & solid / dashed / double      & classification \\
-    Road markings         & painted regions              & segmentation mask \\
-    Traffic signs         & 3-D bounding boxes + label   & detection + classification \\
-    Crosswalks            & 3-D polygons                 & geometry + classification \\
-    Road surface          & elevation mesh + material    & regression \\
-    Speed limits          & per-lane scalar              & regression \\
-    Stoplines             & 3-D line segments            & geometry regression \\
-    \hline
-  \end{tabular}
-\end{table}
+Pre-training with the objectives of Section~\ref{sec:pretraining_objectives}
+produces a backbone that encodes rich geometric and semantic
+priors about the physical world.  What it does not yet know
+is how to produce structured map output in the precise formats
+established in Section~\ref{sec:representations}.  Supervised
+fine-tuning (SFT) bridges this gap.
 
-\subsection{Geometric Accuracy: Chamfer Distance and F-Score}
- 
-For 3-D reconstruction (evaluated against the cross-modal
-objective $\mathcal{L}_{\text{geo}}$), the standard metric is the
-\textbf{Chamfer Distance}~\cite{fan2017chamfer} between predicted and
-ground-truth point sets $\hat{P}$ and $P^*$:
- 
+% ------------------------------------------------------------------
+\subsection{The Canonical Output Representation}
+\label{sec:vocab}
+% ------------------------------------------------------------------
+
+A naive approach to SFT would train the model to generate
+map output directly in a specific format --- OSM XML for Base
+Maps, OpenDRIVE XML for HD Maps.  This would tightly couple
+the model to those particular formats: a consumer requiring
+a different Base Map schema, a different HD map exchange
+standard, or a proprietary automotive map format would need
+a completely different model trained on completely different
+annotated data.  
+The principled solution is to introduce a
+\textbf{canonical intermediate representation} that decouples
+the GFM from any specific map format.  The model always
+generates output in this canonical form; format-specific
+conversion is handled by thin, deterministic serializers and
+deserializers that sit outside the model entirely:
+
 \begin{equation}
-  \mathrm{CD}(\hat{P}, P^*) =
-    \frac{1}{|\hat{P}|}\sum_{\hat{\mathbf{p}} \in \hat{P}}
-      \min_{\mathbf{p}^* \in P^*}
-        \|\hat{\mathbf{p}} - \mathbf{p}^*\|^2
-    +
-    \frac{1}{|P^*|}\sum_{\mathbf{p}^* \in P^*}
-      \min_{\hat{\mathbf{p}} \in \hat{P}}
-        \|\hat{\mathbf{p}} - \mathbf{p}^*\|^2
-  \label{eq:chamfer}
+  \underbrace{\text{annotated map data}}_{\text{any format}}
+  \;\xrightarrow{\text{deserializer}}\;
+  \underbrace{\mathcal{V}_{\text{geo}}}_{\text{canonical}}
+  \;\xrightarrow{\text{GFM (SFT)}}\;
+  \underbrace{\mathcal{V}_{\text{geo}}}_{\text{canonical}}
+  \;\xrightarrow{\text{serializer}}\;
+  \underbrace{\text{map output}}_{\text{any format}}
+  \label{eq:canonical_pipeline}
 \end{equation}
- 
-The first term penalizes \emph{hallucinated geometry}: predicted
-points with no nearby ground-truth counterpart.  The second term
-penalizes \emph{missed geometry}: ground-truth points that no
-predicted point is close to.  Together, Chamfer Distance captures
-both precision and recall of the 3-D reconstruction.
- 
-For HD map applications, we additionally report the
-\textbf{F-score at threshold $\delta$} (typically $\delta = 5$ cm
-for centimeter-level HD maps)~\cite{tatarchenko2019single}:
- 
+
+This decoupling has three practical consequences.  First, a
+single trained model serves consumers requiring different
+output formats without retraining.  Second, SFT training data
+can be sourced from any annotated map format by writing the
+corresponding deserializer --- the model never sees OSM XML
+or OpenDRIVE XML directly, only their canonical
+$\mathcal{V}_{\text{geo}}$ representations.  Third, adding
+support for a new output format requires only a new
+serializer, not a new model.  We define the canonical vocabulary as:
+
 \begin{equation}
-  P_\delta = \frac{|\{\hat{\mathbf{p}} \in \hat{P} :
-    \min_{\mathbf{p}^*}\|\hat{\mathbf{p}}-\mathbf{p}^*\| \leq \delta\}|}{|\hat{P}|},
-  \quad
-  R_\delta = \frac{|\{\mathbf{p}^* \in P^* :
-    \min_{\hat{\mathbf{p}}}\|\hat{\mathbf{p}}-\mathbf{p}^*\| \leq \delta\}|}{|P^*|}
-  \label{eq:pr_delta}
+  \mathcal{V}_{\text{geo}} =
+    \mathcal{V}_{\text{coord}}
+    \cup \mathcal{V}_{\text{sem}}
+    \cup \mathcal{V}_{\text{struct}}
+  \label{eq:vocab}
 \end{equation}
- 
+
+\begin{itemize}
+\item $\mathcal{V}_{\text{coord}}$: quantized coordinate
+  tokens, one per S2 cell ID at the operating resolution,
+  encoding the geodetic position of each geometric primitive.
+  Each coordinate token is followed by a sub-cell ENU offset
+  $\boldsymbol{\delta} \in \mathbb{R}^3$ encoded via
+  Equation~\eqref{eq:token_design}, recovering centimetre-level
+  precision within a computationally tractable vocabulary.
+
+\item $\mathcal{V}_{\text{sem}}$: semantic label tokens
+  encoding the category and attributes of each map feature,
+  independent of any format's specific tag vocabulary.  For
+  Base Maps: \texttt{HIGHWAY\_RESIDENTIAL},
+  \texttt{MAXSPEED\_30}, \texttt{BUILDING},
+  \texttt{LANDUSE\_FOREST}, and so on.  For HD Maps:
+  \texttt{LANE\_SOLID}, \texttt{LANE\_DASHED},
+  \texttt{SPEED\_50}, \texttt{STOP\_SIGN},
+  \texttt{CROSSWALK}.
+
+\item $\mathcal{V}_{\text{struct}}$: structural delimiter
+  tokens encoding the boundaries between geometric
+  primitives.  \texttt{[START\_WAY]} and \texttt{[END\_WAY]}
+  delimit road polylines and building polygons;
+  \texttt{[START\_NODE]} and \texttt{[END\_NODE]} delimit
+  point features; \texttt{[START\_LINE]} and
+  \texttt{[END\_LINE]} delimit lane boundary polylines;
+  \texttt{[START\_POLY]} and \texttt{[END\_POLY]} delimit
+  closed polygon features.
+\end{itemize}
+
+To make the bidirectional mapping concrete, consider a Base
+Map road segment.  In OSM format this is a \texttt{<way>}
+element with \texttt{highway}, \texttt{maxspeed}, and
+\texttt{lanes} tags and an ordered sequence of
+\texttt{<nd ref>} node references encoding the center-line
+waypoints.  The deserializer converts this to the canonical
+sequence:
+
+\begin{verbatim}
+[START_WAY] [HIGHWAY_RESIDENTIAL] [MAXSPEED_30] [LANES_2]
+  [cell:1234560] [offset:( 0.00,  0.00, 35.20)]
+  [cell:1234561] [offset:( 4.97,  0.11, 35.22)]
+  [cell:1234562] [offset:( 9.94,  0.18, 35.25)]
+[END_WAY]
+\end{verbatim}
+
+\noindent The semantic tokens correspond one-to-one with the
+OSM tags; the coordinate tokens correspond to the geodetic
+waypoints of the center-line polyline encoded at the
+operating S2 level with ENU sub-cell offsets.  The
+serializer performs the inverse mapping, reconstructing a
+valid OSM \texttt{<way>} element from the token sequence.
+Graph connectivity is recovered implicitly: two ways sharing
+a coordinate token at the same S2 cell encode an intersection,
+exactly as two OSM ways sharing a \texttt{<nd>} node
+reference encode a junction.
+
+For an HD Map lane boundary, the deserializer materialises
+the implicit parametric representation of
+Section~\ref{sec:representations} --- evaluating the road
+center-line curve, applying lateral width offsets, and
+reading elevation from the elevation profile --- to produce
+explicit 3D ENU waypoints, which are then encoded as:
+
+\begin{verbatim}
+[START_LINE] [LANE_SOLID] [SPEED_50]
+  [cell:1234567] [offset:(2.31, 0.14, -0.02)]
+  [cell:1234568] [offset:(2.38, 0.19, -0.02)]
+  [cell:1234569] [offset:(2.44, 0.21, -0.01)]
+[END_LINE]
+\end{verbatim}
+
+\noindent The serializer performs the inverse: given the
+explicit waypoint sequence, it fits a parametric curve and
+reconstructs the compact HD map representation in whichever
+exchange format the consumer requires.
+
+In both cases the semantic label token appears immediately
+after the structural delimiter, so the model predicts
+geometry \emph{conditioned on} the semantic type of the
+feature it is generating --- ensuring structural consistency
+between predicted tags and predicted geometry.  The
+representation is flexible in length: a long motorway uses
+many coordinate tokens; a short stop line uses two; a
+complex intersection polygon uses as many tokens as it has
+vertices.  The model is trained with teacher-forced
+next-token prediction and a standard cross-entropy
+objective~\cite{liao2022maptr}.
+
+% ------------------------------------------------------------------
+\subsection{Base Map SFT}
+\label{sec:basemap_sft}
+% ------------------------------------------------------------------
+
+\paragraph{Task definition.}
+
+Base Map SFT trains the model to generate canonical
+$\mathcal{V}_{\text{geo}}$ token sequences encoding road
+network topology, building footprints, and land use
+annotations from satellite imagery, optionally conditioned
+on an existing Base Map.  The input is a level-12 S2 tile
+of satellite imagery $\mathcal{I}_{2D}$ (with Base Map
+conditioning context $\mathbf{T}^{\text{map}}$ prepended
+when available), and the target output is the
+$\mathcal{V}_{\text{geo}}$ serialization of the ground-truth
+Base Map content for the same tile.
+
+\paragraph{SFT data construction.}
+
+A critical practical advantage of Base Map SFT is the
+abundance of freely available training data.  The global
+OSM database provides annotated Base Map content for
+virtually every inhabited region of the Earth, and satellite
+imagery archives provide the corresponding sensor
+observations.  Constructing SFT pairs is therefore a data
+engineering task rather than an annotation task: for each
+level-12 S2 tile, retrieve the corresponding satellite
+imagery crop and the corresponding OSM data, apply the
+deserializer to convert the OSM content to a
+$\mathcal{V}_{\text{geo}}$ token sequence, and store the
+(imagery, token sequence) pair as a training example.  The
+global coverage and open license of OSM means this process
+can be applied at planetary scale without any manual
+annotation effort beyond what the OSM community has already
+contributed.
+
+When a prior Base Map is available as conditioning context
+(Types~3 and~5 in Table~\ref{tab:gfm_types}), the target
+token sequence encodes only the \emph{differences} between
+the prior Base Map and the current ground truth --- new
+roads, modified building footprints, updated land use
+boundaries --- rather than the full tile content.  This
+delta encoding reduces target sequence length substantially,
+since most map elements are unchanged between observations,
+and focuses the model's learning on the detection and
+characterisation of geographic change.
+
+\paragraph{SFT loss.}
+
 \begin{equation}
-  F_\delta = \frac{2\,P_\delta\,R_\delta}{P_\delta + R_\delta}
-  \label{eq:fscore}
-\end{equation}
- 
-\subsection{Semantic Accuracy: Lane IoU and Sign AP}
- 
-For lane boundary segmentation, we use the standard
-\textbf{Intersection over Union (IoU)}~\cite{everingham2010pascal}:
- 
-\begin{equation}
-  \mathrm{IoU} = \frac{|\hat{\mathcal{L}} \cap \mathcal{L}^*|}{|\hat{\mathcal{L}} \cup \mathcal{L}^*|}
-  \label{eq:iou}
-\end{equation}
- 
-where $\hat{\mathcal{L}}$ is the set of predicted lane pixels
-(thresholded from the model output) and $\mathcal{L}^*$ is the
-set of ground-truth lane pixels.  For traffic sign detection,
-we use \textbf{Average Precision (AP)}~\cite{everingham2010pascal},
-computed as the area under the Precision-Recall curve at a 3-D
-bounding-box IoU threshold of 0.5:
- 
-\begin{equation}
-  \mathrm{AP} = \int_0^1 P(R)\,dR
-  \label{eq:ap}
-\end{equation}
- 
-\subsection{Change Detection: Balanced Accuracy}
- 
-Given the severe class imbalance in change detection (Section~9.3),
-standard accuracy is misleading---a model that always predicts ``no
-change'' achieves $>$98\% accuracy on typical data.  We report instead
-\textbf{Balanced Accuracy}~\cite{brodersen2010balanced}:
- 
-\begin{equation}
-  \mathrm{BA} =
-    \frac{1}{2}\!\left(
-      \frac{TP}{TP + FN} + \frac{TN}{TN + FP}
+  \mathcal{L}_{\text{base}} =
+    -\sum_{t=1}^{T}
+    \log P_\theta\!\left(
+      y_t \mid y_{<t},\;
+      \mathbf{T}^{\text{geo}}
     \right)
-  \label{eq:balanced_accuracy}
+  \label{eq:basemap_sft_loss}
 \end{equation}
- 
-which averages the true positive rate (sensitivity) and true negative
-rate (specificity).  A model that always predicts ``no change''
-achieves BA $= 50\%$---a fair, meaningful baseline.  We additionally
-report the $F_1$ score on the positive (changed) class, which directly
-measures the practical utility of the model for triggering map
-re-surveys.
- 
-\subsection{Embedding Quality: Geo-spatial Retrieval Recall}
- 
-To evaluate the backbone's representation quality independently of
-any specific downstream task, we use a
-\textbf{geo-spatial retrieval benchmark}~\cite{warburg2020mapillary}.
-Given a query tile in image form (without LiDAR), the model must
-identify the matching LiDAR tile from a database of $N_{\text{db}}$
-candidates.  We report \textbf{Recall@$k$}: the fraction of queries
-for which the correct tile appears in the top-$k$ retrieved results
-by embedding similarity.  A well-aligned model should achieve
-Recall@1 $> 80\%$ and Recall@5 $> 95\%$ on held-out geographies.
- 
+
+where $y_1, \ldots, y_T$ is the target $\mathcal{V}_{\text{geo}}$
+token sequence and $\mathbf{T}^{\text{geo}}$ is the fused
+embedding produced by the pre-trained backbone from the
+satellite imagery input.  The backbone is initialised from
+the pre-trained weights and fine-tuned at a lower learning
+rate, preserving the geometric priors acquired during
+pre-training while adapting the output distribution to the
+canonical map representation.
+
 % ------------------------------------------------------------------
-\section{Full Architecture Summary, Open Datasets, and Research
-Opportunities}
+\subsection{HD Map SFT}
+\label{sec:hdmap_sft}
+% ------------------------------------------------------------------
+
+\paragraph{Task definition.}
+
+HD Map SFT trains the model to generate canonical
+$\mathcal{V}_{\text{geo}}$ token sequences encoding
+centimetre-accurate lane boundaries, road markings, traffic
+signs, and regulatory attributes from the fusion of satellite
+imagery and ground-vehicle LiDAR, optionally conditioned on
+a Base Map.  The input is a level-12 S2 tile containing
+both $\mathcal{I}_{2D}$ and $P$ (with Base Map conditioning
+$\mathbf{T}^{\text{map}}$ prepended when available), and the
+target is the $\mathcal{V}_{\text{geo}}$ serialization of
+the ground-truth HD map content.
+
+\paragraph{SFT data construction.}
+
+HD Map SFT faces a fundamentally different data availability
+situation from Base Map SFT.  Centimetre-accurate lane
+boundary annotations require dedicated ground-survey
+vehicles equipped with high-precision LiDAR, GNSS, and IMU
+systems, followed by manual annotation and quality control
+by specialised operators.  The cost of producing HD map
+annotations is approximately three orders of magnitude
+higher per kilometre of road than producing Base Map
+annotations from satellite imagery, and geographic coverage
+is limited to road networks that have been physically
+surveyed.
+
+Several open-access datasets provide HD map annotations at
+limited geographic scale~\cite{caesar2020nuscenes,
+nuplan2023}.  The deserializer converts these annotations
+from their native exchange format to $\mathcal{V}_{\text{geo}}$
+token sequences, producing (imagery + LiDAR, token sequence)
+training pairs in the same canonical form used for Base Map
+SFT.  The model is therefore format-agnostic with respect
+to the source of HD map annotations --- training data from
+different annotation campaigns in different exchange formats
+can be mixed freely, as long as each source's deserializer
+is implemented.
+
+Because annotated HD map data is geographically sparse,
+Base Map conditioning is particularly valuable here.  The
+model need not simultaneously infer road topology and
+lane-level detail from raw sensor observations; the Base Map
+provides the former and the model concentrates on the latter.
+This division of labour enables generalisation to unseen
+geographies that have Base Map coverage but no HD map
+annotations.
+
+\paragraph{SFT loss.}
+
+\begin{equation}
+  \mathcal{L}_{\text{hd}} =
+    -\sum_{t=1}^{T}
+    \log P_\theta\!\left(
+      y_t \mid y_{<t},\;
+      \mathbf{T}^{\text{geo}}
+    \right)
+  \label{eq:hdmap_sft_loss}
+\end{equation}
+
+where $y_1, \ldots, y_T$ now encodes the lane-level HD map
+content of the tile in $\mathcal{V}_{\text{geo}}$ form.  The
+backbone processes both imagery and LiDAR tokens through the
+full bidirectional cross-attention fusion of
+Section~\ref{sec:fusion}, producing a $\mathbf{T}^{\text{geo}}$
+that carries both visual texture and centimetre-accurate 3D
+geometry.
+
+% ------------------------------------------------------------------
+\subsection{Three-Phase Training Curriculum}
+\label{sec:curriculum}
+% ------------------------------------------------------------------
+
+The full training curriculum integrates pre-training and the
+two SFT phases into a coherent three-phase progression.
+
+\paragraph{Phase 1: Geometric pre-training.}
+
+The backbone is pre-trained on a large corpus of paired
+satellite imagery and LiDAR tiles covering diverse
+geographies using the combined objective
+(Equation~\eqref{eq:total_loss}).  No task-specific
+supervision is used --- only the self-supervised signals
+derived from the sensor data itself, conditioned on
+whatever Base Map and POI context is available for each
+tile.  The model learns to associate visual texture with
+3D geometry, to reconstruct occluded geometry from context,
+and to align the embedding spaces of both modalities.
+Geographic diversity in the pre-training corpus is critical:
+a model pre-trained on diverse geographies generalises
+better to previously unseen regions than one pre-trained
+on a geographically restricted corpus~\cite{kaplan2020scaling}.
+
+\paragraph{Phase 2a: Base Map SFT.}
+
+The pre-trained backbone is fine-tuned on
+(satellite imagery, $\mathcal{V}_{\text{geo}}$ token sequence)
+pairs derived from OSM annotations using the loss of
+Equation~\eqref{eq:basemap_sft_loss}.  Only the autoregressive
+output decoder is trained from scratch; the backbone is
+initialised from Phase~1 and fine-tuned at a lower learning
+rate.  The global availability of OSM data means this phase
+can be conducted at large scale with broad geographic
+coverage, producing a model that generates valid canonical
+Base Map token sequences for previously unseen regions, which
+the serializer then converts to the required delivery format.
+
+\paragraph{Phase 2b: HD Map SFT.}
+
+The backbone is fine-tuned on (satellite imagery + LiDAR,
+$\mathcal{V}_{\text{geo}}$ token sequence) pairs derived from
+annotated HD map datasets using the loss of
+Equation~\eqref{eq:hdmap_sft_loss}.  Base Map conditioning
+is used where available.  This phase is conducted at smaller
+scale due to the limited availability of HD map annotations,
+with the pre-trained backbone providing the geometric priors
+that enable generalisation beyond the surveyed regions.
+
+The three phases map cleanly onto the pre-training and SFT
+curriculum established in earlier chapters of this book:
+broad unsupervised pre-training on diverse raw data, followed
+by task-specific fine-tuning on structured annotations, with
+the pre-trained representations providing the generalisation
+capability that makes fine-tuning on limited annotated data
+effective.
+
+% ------------------------------------------------------------------
+\section{Full Architecture Summary and Open Datasets}
 \label{sec:architecture_summary}
 % ------------------------------------------------------------------
 
 We now assemble all components into the complete
-\textbf{Geo-spatial Foundational Model (GFM)} and describe its
-three-phase training curriculum.  We then survey the open-access
-datasets available to train and benchmark such a model, and position
-the GFM architecture as a genuine open research opportunity: while
-each of its components has precedent in the literature, their
-specific combination into a single unified, geodetically grounded,
-multi-modal foundational model has not yet appeared in any published
-system.
+\textbf{Geo-spatial Foundational Model (GFM)} and survey the
+open-access datasets available to train and benchmark it.
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\textwidth]{images/gfm_architecture.png}
-  \caption{Complete GFM architecture diagram.  Input preprocessing
-    (geodetic frame transforms) feeds dual-stream tokenizers (image
-    patchification and LiDAR pillarization).  Hierarchical S2
-    positional embeddings are added, followed by separate
-    self-attention encoders, then bidirectional cross-attention
-    fusion.  The shared backbone Transformer produces the geo-spatial
-    token embedding $\mathbf{T}^{\text{geo}}$, which feeds
-    task-specific output heads (geometry regression, semantic
-    classification, change detection, retrieval embedding).}
+  \caption{Complete GFM architecture.  Input preprocessing
+    (geodetic frame transforms) feeds the universal tokenization
+    backbone, which produces tokens for all available modalities.
+    Conditioning context tokens (Base Map, POI) are prepended
+    and never masked.  Sensor observation tokens (satellite
+    imagery, LiDAR) are partially masked and fed to separate
+    self-attention encoders, then fused by bidirectional
+    cross-attention.  The shared backbone Transformer produces
+    the geo-spatial embedding $\mathbf{T}^{\text{geo}}$, which
+    feeds the autoregressive decoder generating
+    $\mathcal{V}_{\text{geo}}$ token sequences.  A
+    format-specific serializer converts the canonical output
+    to the required delivery format (OSM, OpenDRIVE, or any
+    other map exchange standard).}
   \label{fig:gfm_architecture}
 \end{figure}
 
 % ------------------------------------------------------------------
-\subsection{Three-Phase Training Curriculum}
+\subsection{Architecture Summary}
 % ------------------------------------------------------------------
 
-\paragraph{Phase 1: Geometric Pre-training.}
+The GFM architecture developed in this chapter has five
+principal components, each addressing one of the four core
+challenges identified in the introduction.
 
-The model is pre-trained on a large corpus of paired satellite
-imagery and LiDAR tiles covering diverse geographies (urban,
-suburban, rural, highway) using the combined objective
-(Equation~\eqref{eq:total_loss}).  This phase is analogous to
-language model pre-training on internet text~\cite{brown2020gpt3,
-chowdhery2023palm}: no task-specific supervision is used, only
-self-supervised signals derived from the data itself.  The model
-learns to associate visual texture with 3D geometry, to reconstruct
-occluded geometry from context, and to align the embedding spaces
-of both modalities.  Scale is critical: models pre-trained on more
-geographic diversity generalize better to previously unseen
-regions~\cite{kaplan2020scaling}.
+\textbf{Geodetic grounding}
+(Sections~\ref{sec:geodetic}--\ref{sec:sensor_georef}).
+All sensor inputs are georeferenced to the WGS~84 spheroid
+via the ECEF transformation (Equations~\ref{eq:prime_vertical}
+and~\ref{eq:ecef}) and converted to the local ENU frame for
+inference (Equation~\ref{eq:enu_transform}).  This three-frame
+strategy eliminates map-projection distortions, date-line
+seams, and pole singularities from the model's input.
 
-\paragraph{Phase 2: Semantic Fine-tuning.}
+\textbf{Universal spatial tokenization}
+(Sections~\ref{sec:tokenization_spatial}--\ref{sec:tokenization}).
+The S2 geometry system projects the sphere onto a cube,
+subdivides it into approximately equal-area cells at
+resolutions from continental ($\ell=0$) to centimetre
+($\ell=25$), and linearizes the result using Hilbert curve
+ordering (Equation~\ref{eq:hilbert_locality}).  Every
+spatially grounded data element --- satellite image patch,
+LiDAR pillar, Base Map waypoint, POI location --- is
+tokenized via the universal backbone of
+Equation~\eqref{eq:universal_token}, placing all modalities
+in a shared $\mathbb{R}^h$ embedding space with a common
+S2-based positional embedding.
 
-The pre-trained backbone is fine-tuned on annotated HD map datasets
-using supervised task losses (lane IoU, sign AP).  Only the
-task-specific heads (Equation~\eqref{eq:task_heads}) are trained
-from scratch; the backbone is initialized from Phase~1 and fine-tuned
-at a lower learning rate~\cite{li2022hdmapnet,liao2022maptr}.  The
-pre-training has established rich geometric representations;
-fine-tuning adapts them to the precise output format expected by
-downstream consumers.
+\textbf{Compositional multi-modal fusion}
+(Sections~\ref{sec:fusion}--\ref{sec:compositional_gfm}).
+Conditioning context tokens (Base Map, POI) are prepended
+to the input sequence and are never masked.  Sensor
+observation tokens (imagery, LiDAR) are partially masked
+during pre-training and fused through bidirectional
+cross-attention (Equations~\ref{eq:img2lid_attn}
+and~\ref{eq:lid2img_attn}) with a projective-geometry mask
+that restricts attention to physically aligned token pairs.
+The compositional framework of
+Section~\ref{sec:compositional_gfm} supports any combination
+of available modalities without modifying the backbone
+architecture.
 
-\paragraph{Phase 3: Change Detection Fine-tuning.}
+\textbf{Self-supervised pre-training}
+(Section~\ref{sec:pretraining_objectives}).
+Five complementary objectives
+(Equation~\ref{eq:total_loss}) learn the physical priors
+of the world from raw sensor data without map annotation:
+within-modality masked reconstruction warms up each encoder;
+cross-modal reconstruction forces the model to associate
+visual texture with 3D geometry; and contrastive alignment
+ensures the embedding spaces of both modalities are
+geometrically commensurate.
 
-The frozen backbone (from Phase~2) is coupled with the change
-detection head (Equation~\eqref{eq:change_head}) and fine-tuned on
-a dataset of temporal tile pairs with annotated change masks.
-Because the backbone already produces strong geo-spatial embeddings,
-only the lightweight change head parameters need to be updated ---
-analogous to attaching a LoRA adapter~\cite{hu2021lora} to a frozen
-language model for a specific downstream task.
-
-The three phases map cleanly onto the pre-training / SFT / alignment
-curriculum established in earlier chapters of this book, confirming
-that the foundational model paradigm extends naturally from language
-to geo-spatial data.
+\textbf{Canonical output and supervised fine-tuning}
+(Section~\ref{sec:sft-map-generation}).
+The unified geo-spatial vocabulary $\mathcal{V}_{\text{geo}}$
+decouples the model from any specific map exchange format.
+Format-specific deserializers convert annotated map data to
+$\mathcal{V}_{\text{geo}}$ training targets; the autoregressive
+decoder is fine-tuned on these targets separately for Base
+Map generation (Phase~2a) and HD Map generation (Phase~2b);
+and format-specific serializers convert the generated
+canonical sequences to the required delivery format at
+inference time.
 
 % ------------------------------------------------------------------
 \subsection{Open-Access Datasets}
 \label{sec:datasets}
 % ------------------------------------------------------------------
 
-Training and benchmarking the GFM requires large-scale paired
-satellite imagery and LiDAR data.  Fortunately, several open-access
-archives provide the raw materials for Phase~1 pre-training, and
-several annotated datasets support Phase~2 fine-tuning.
+Training and benchmarking the GFM requires large-scale
+paired sensor data and map annotations.  The following
+open-access archives provide the raw materials for each
+phase of the training curriculum.
 
-\paragraph{Satellite Imagery.}
+\paragraph{Phase 1 pre-training: satellite imagery.}
 
 The \textbf{Sentinel-2} constellation~\cite{drusch2012sentinel},
-operated by the European Space Agency under the Copernicus programme,
-provides global multispectral imagery at 10 m resolution with a
-5-day revisit cycle, freely accessible via the Copernicus Data Space
-Ecosystem.  Its 13-band multispectral coverage makes it the natural
-backbone for global-scale pre-training.  The \textbf{Landsat}
-archive~\cite{wulder2022landsat}, maintained jointly by NASA and the
-USGS, extends back to 1972 at 15--30 m resolution, providing a
-50-year temporal record that is invaluable for change detection
-pre-training.  For higher-resolution imagery, the \textbf{SpaceNet}
-challenge datasets~\cite{van2018spacenet} release sub-meter
-commercial satellite imagery paired with annotated building
-footprints and road networks over major cities worldwide, making
-them suitable for Phase~2 semantic fine-tuning.
+operated by the European Space Agency under the Copernicus
+programme, provides global multispectral imagery at 10\,m
+resolution with a 5-day revisit cycle, freely accessible
+via the Copernicus Data Space Ecosystem.  Its 13-band
+multispectral coverage makes it the natural backbone for
+global-scale pre-training.  The \textbf{Landsat}
+archive~\cite{wulder2022landsat}, maintained jointly by
+NASA and the USGS, extends back to 1972 at 15--30\,m
+resolution, providing a 50-year temporal record that is
+invaluable for temporal change detection.
+\textbf{OpenAerialMap}~\cite{openaerialmap2015} aggregates
+open-licensed aerial and satellite imagery at sub-metre
+resolution for areas of particular interest.
 
-\paragraph{LiDAR Point Clouds.}
+\paragraph{Phase 1 pre-training: LiDAR point clouds.}
 
-The \textbf{KITTI} dataset~\cite{geiger2012kitti} and the
-\textbf{nuScenes} dataset~\cite{caesar2020nuscenes} provide
-ground-vehicle LiDAR scans for autonomous driving, with annotated
-3D object detection and lane-level map annotations respectively.
-For aerial LiDAR, the \textbf{USGS 3D Elevation Program
-(3DEP)}~\cite{usgs3dep} provides nationwide airborne LiDAR-derived
-point clouds and digital elevation models covering the continental
-United States at 1 m resolution, freely available via the USGS
-National Map.  \textbf{OpenTopography}~\cite{crosby2023opentopo}
-aggregates high-resolution airborne and terrestrial LiDAR datasets
-from research institutions worldwide, with open access and
-standardized LAS/LAZ delivery.
+The \textbf{USGS 3D Elevation Program
+(3DEP)}~\cite{usgs3dep} provides nationwide airborne
+LiDAR-derived point clouds and digital elevation models
+covering the continental United States at 1\,m resolution,
+freely available via the USGS National Map.
+\textbf{OpenTopography}~\cite{crosby2023opentopo}
+aggregates high-resolution airborne and terrestrial LiDAR
+datasets from research institutions worldwide with open
+access and standardized LAS/LAZ delivery.
+
+\paragraph{Phase 1 pre-training: conditioning context.}
+
+The global \textbf{OpenStreetMap}
+database~\cite{haklay2008openstreetmap} provides Base Map
+conditioning context for virtually every inhabited region
+of the Earth under the Open Database License.  Open POI
+databases --- including the Overture Maps Foundation's
+Places dataset and the OpenStreetMap POI layer --- provide
+global POI conditioning context at no cost.
+
+\paragraph{Phase 2a Base Map SFT.}
+
+The same \textbf{OpenStreetMap} database that provides
+conditioning context also provides the SFT annotation
+targets for Base Map fine-tuning.  The OSM deserializer
+converts OSM XML to $\mathcal{V}_{\text{geo}}$ token
+sequences, producing SFT training pairs at global scale
+without any additional annotation effort.  The
+\textbf{SpaceNet} challenge datasets~\cite{van2018spacenet}
+provide sub-metre commercial satellite imagery paired with
+manually verified building footprint and road network
+annotations over major cities worldwide, offering
+higher-quality SFT data for urban environments.
+
+\paragraph{Phase 2b HD Map SFT.}
+
+The \textbf{nuScenes} dataset~\cite{caesar2020nuscenes}
+provides ground-vehicle LiDAR scans with lane-level map
+annotations for urban driving environments.  The
+\textbf{nuPlan} dataset~\cite{nuplan2023} extends this
+with a larger-scale collection of annotated driving
+scenarios.  The \textbf{KITTI} dataset~\cite{geiger2012kitti}
+provides ground-vehicle LiDAR scans for autonomous driving
+research.  All three datasets' annotations are converted
+to $\mathcal{V}_{\text{geo}}$ token sequences by their
+respective deserializers, producing HD Map SFT training
+pairs in the canonical format regardless of differences
+in the datasets' native annotation schemas.
 
 % ------------------------------------------------------------------
 \subsection{The GFM as an Open Research Opportunity}
 \label{sec:research_opportunity}
 % ------------------------------------------------------------------
 
-A natural question is whether the GFM architecture described in this
-chapter has already been realized in a published system that one
-could download and use.  The honest answer is: not yet, at least not
-in the full form described here.
+A natural question is whether the GFM architecture described
+in this chapter has already been realised in a published
+system.  The honest answer is: not yet, at least not in
+the full form described here.
 
 Several published models address parts of the problem.
-\textbf{Prithvi}~\cite{jakubik2023prithvi}, a collaboration between
-NASA and IBM, is a masked autoencoder pre-trained on Sentinel-2 and
-Harmonized Landsat-Sentinel (HLS) imagery, open-sourced on
-HuggingFace.  It demonstrates that self-supervised pre-training on
-satellite imagery at scale produces transferable representations for
-downstream tasks such as flood mapping and crop segmentation.
-\textbf{SatMAE}~\cite{cong2022satmae} applies the masked autoencoder
-framework to multi-temporal and multi-spectral satellite imagery,
-showing strong transfer to remote sensing benchmarks.
-\textbf{RemoteCLIP}~\cite{liu2024remoteclip} adapts the CLIP
-contrastive alignment framework to satellite imagery and text
-captions, enabling zero-shot scene classification.  On the autonomous
-driving side, \textbf{BEVFormer}~\cite{li2022bevformer} and
-\textbf{HDMapNet}~\cite{li2022hdmapnet} demonstrate cross-modal
-fusion of camera and LiDAR for HD map element prediction.
+Models pre-trained on satellite imagery using masked
+autoencoding --- such as Prithvi~\cite{jakubik2023prithvi}
+and SatMAE~\cite{cong2022satmae} --- demonstrate that
+self-supervised pre-training on satellite data at scale
+produces transferable representations for downstream remote
+sensing tasks.  Contrastive alignment of satellite imagery
+with text captions~\cite{liu2024remoteclip} enables
+zero-shot scene classification.  On the autonomous driving
+side, cross-modal fusion of camera and LiDAR for HD map
+element prediction has been demonstrated at the tile
+level~\cite{li2022bevformer,li2022hdmapnet,liao2022maptr}.
 
 However, none of these models combines all of the following:
 
 \begin{itemize}
-  \item \textbf{Geodetic grounding}: working natively in WGS~84
-    ECEF and ENU coordinate frames rather than in projected pixel
-    space or sensor-local frames, eliminating map-projection
-    distortions and date-line seams.
+  \item \textbf{Geodetic grounding}: working natively in
+    WGS~84 ECEF and ENU coordinate frames, eliminating
+    map-projection distortions and date-line seams.
 
-  \item \textbf{S2-based spatial tokenization}: discretizing the
-    Earth's surface into approximately equal-area cells using the S2
-    hierarchy and Hilbert curve ordering, providing a globally
-    consistent token space from centimeter to continental scale.
+  \item \textbf{Universal S2-based tokenization}: a single
+    tokenization backbone for all modalities --- satellite
+    imagery, LiDAR, Base Map, POI --- grounded in the S2
+    hierarchy and Hilbert curve ordering.
 
-  \item \textbf{Cross-modal satellite and LiDAR fusion}:
-    bidirectional cross-attention between satellite imagery tokens
-    and LiDAR pillar tokens, grounded in the projective geometry of
-    the sensor pair, at planetary pre-training scale.
+  \item \textbf{Compositional multi-modal architecture}:
+    a conditioning context / sensor observation distinction
+    that accommodates any combination of available modalities
+    without architectural modification.
 
-  \item \textbf{Unified geo-spatial token vocabulary}: a single
-    autoregressive token sequence encoding both continuous geometry
-    and discrete semantics, enabling zero-shot HD map generation for
-    previously unseen regions.
+  \item \textbf{Canonical output representation}: a
+    format-neutral $\mathcal{V}_{\text{geo}}$ vocabulary
+    that decouples the model from any specific map exchange
+    standard, enabling both Base Map and HD Map generation
+    from a single backbone.
 
-  \item \textbf{Planet-scale self-supervised pre-training}: using
-    the five-objective combined loss of Equation~\eqref{eq:total_loss} on paired imagery and LiDAR tiles covering diverse global geographies.
+  \item \textbf{Three-phase training curriculum}: geometric
+    pre-training on globally diverse sensor data, followed
+    by separate Base Map and HD Map SFT phases using
+    openly available annotation sources.
 \end{itemize}
 
-The combination of these five properties into a single unified
-architecture is the central contribution of this chapter and
-represents a genuine open research opportunity.  The datasets
-described in Section~\ref{sec:datasets} provide the raw materials
-to realize it: Sentinel-2 and 3DEP together cover the continental
-United States with paired 10 m imagery and 1 m LiDAR, sufficient
-for a first large-scale pre-training experiment.  Scaling to global
-coverage would require incorporating additional LiDAR archives and
-high-resolution commercial imagery, but the architectural blueprint
-developed here is resolution- and geography-agnostic by design.
+The combination of these properties into a single unified
+architecture represents a genuine open research opportunity.
+The datasets described in Section~\ref{sec:datasets} provide
+the raw materials to realise it: Sentinel-2 and 3DEP
+together cover the continental United States with paired
+10\,m imagery and 1\,m LiDAR, sufficient for a first
+large-scale pre-training experiment, and the global OSM
+database provides Base Map SFT supervision at no annotation
+cost.  For a reader interested in pursuing this direction,
+the most tractable entry point is a scaled-down Phase~1
+pre-training experiment on a single metropolitan area ---
+the greater Paris region, which we have used as a running
+example throughout this chapter --- followed by Base Map
+SFT on the corresponding OSM tile before scaling to
+continental coverage.
 
-For the reader interested in pursuing this direction, the most
-tractable entry point is likely a scaled-down version of Phase~1
-pre-training on a single metropolitan area --- for example, the
-greater Paris region, which we have used as a running example
-throughout this chapter --- using publicly available Sentinel-2
-imagery and airborne LiDAR from national mapping agencies, before
-scaling to continental coverage.
-
- 
-% ------------------------------------------------------------------
-\section{Conclusion}
-% ------------------------------------------------------------------
- 
-This chapter has developed the complete mathematical and architectural
-framework for a Geo-spatial Foundational Model, addressing the four
-core challenges identified in the introduction.
- 
-\textbf{Spheroidal geometry} was addressed by grounding the model in
-the WGS 84 standard~\cite{nima2000wgs84}, transforming geodetic
-coordinates to the global ECEF Cartesian frame via
-Equations~\eqref{eq:prime_vertical} and \eqref{eq:ecef}, and
-converting to a local ENU frame for inference via
-Equations~\eqref{eq:enu_rotation} and \eqref{eq:enu_transform}.
-This three-frame strategy eliminates map projection
-distortions~\cite{snyder1987map}, date-line seams, and pole
-singularities from the model's input.
- 
-\textbf{Spatial tokenization} was addressed by the S2 geometry
-system~\cite{s2geometry}, which projects the sphere onto a cube and
-subdivides it into approximately equal-area quadtree cells at
-resolutions from continental ($\ell = 0$) to centimeter ($\ell = 25$).
-Hilbert curve ordering~\cite{hilbert1891,sagan1994space}
-(Equation~\eqref{eq:hilbert_locality}) ensures that spatially adjacent
-cells are adjacent in the token sequence, enabling efficient local
-attention windows without loss of spatial coherence.  A hierarchical
-position embedding (Equation~\eqref{eq:pos_emb}) combines a coarse
-cell identity with a fine ENU offset to achieve centimeter precision
-within a computationally tractable token budget.
- 
-\textbf{Multi-modal fusion} was addressed by pillar
-tokenization~\cite{lang2019pointpillars} of LiDAR point clouds
-(Equation~\eqref{eq:pillar}) and bidirectional cross-attention
-fusion~\cite{li2022bevformer} with a projective-geometry
-mask~\cite{hartley2003multiple}
-(Equations~\eqref{eq:img2lid_attn} and \eqref{eq:lid2img_attn}).
-The resulting geo-spatial token embedding $\mathbf{T}^{\text{geo}}$
-unifies semantic texture from imagery with geometric precision from
-LiDAR in a single shared representation.
- 
-\textbf{Semantic and geometric learning} was addressed by a unified
-geo-spatial token vocabulary (Section~\ref{sec:vocab}) that encodes
-both continuous geometry and discrete semantics as sequences of
-discrete tokens, enabling autoregressive generation of HD map
-features~\cite{liao2022maptr}.  Self-supervised pre-training with
-five complementary objectives~\cite{he2022masked,radford2021clip}
-(Equation~\eqref{eq:total_loss}) learns the deep structural priors of
-the physical world without requiring large annotated datasets.
-Change detection via temporal token pairs and focal
-loss~\cite{lin2017focal} (Equation \eqref{eq:focal_loss}) extends
-the model to map maintenance over time.
- 
-The geo-spatial foundational model is, at its core, an application
-of the same deep principles encountered throughout this book:
-representation learning on raw sensor data~\cite{dosovitskiy2021vit,
-he2022masked}, self-supervised pre-training to learn world structure,
-and task-specific fine-tuning~\cite{hu2021lora} to specialize that
-structure for downstream applications.  What makes it distinctive
-is the domain's uncompromising physical constraints: the curvature of
-the Earth~\cite{nima2000wgs84}, the precision requirements of
-autonomous driving~\cite{caesar2020nuscenes}, and the need to fuse
-fundamentally different sensor modalities into a coherent world model.
-By respecting these constraints at every architectural decision point,
-the geo-spatial foundational model learns not merely to
-pattern-match pixels, but to understand the physical geometry of
-the world.
- 
 % ------------------------------------------------------------------
 % References
 % ------------------------------------------------------------------
@@ -11975,6 +13035,8 @@ Ralph~Allan Bradley and Milton~E. Terry.
 \newblock Rank analysis of incomplete block designs: I. The method of paired comparisons.
 \newblock {\em Biometrika}, 39(3/4):324--345, 1952.
 
+\bibitem{zhang2000flexible}
+Z. Zhang, "A flexible new technique for camera calibration," in \textit{IEEE Transactions on Pattern Analysis and Machine Intelligence}, vol. 22, no. 11, pp. 1330-1334, Nov. 2000.
 
 \end{thebibliography}
 
