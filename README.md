@@ -1,7 +1,7 @@
 # Fundamentals of Generative AI
 
 ## Overview
-This book is an introduction to the fundamentals of Generative AI. The book attempts to be accessible to anyone with a high school math education, while maintaining reasonable rigor in conveying the fundamental concepts underpinning the complex topic of Generative AI. The core objctive of this book is to be understandble by connecting the math to intuition, and by breaking down the math into simple steps. 
+This book is an introduction to the fundamentals of Generative AI. The book attempts to be accessible to anyone with a high school math education, while maintaining reasonable rigor in conveying the fundamental concepts underpinning the complex topic of Generative AI. The core objective of this book is to be understandable by connecting the math to intuition, and by breaking down the math into simple steps. 
 
 ## How to Read
 
