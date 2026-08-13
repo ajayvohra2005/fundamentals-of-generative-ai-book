@@ -10523,7 +10523,7 @@ $\delta_\ell / 2$.
 For HD map applications requiring centimeter-level accuracy, we need:
 \begin{equation}
   \frac{\delta_\ell}{2} \;\leq\; 0.05\ \text{m}
-  \quad\Rightarrow\quad \ell \geq 25
+  \quad\Rightarrow\quad \ell \geq 27
   \label{eq:precision_requirement}
 \end{equation}
 
@@ -10539,18 +10539,20 @@ level, cell edge length, and the number of cells covering a
 \hline
 \textbf{Level} & \textbf{Avg.\ edge} & \textbf{Cells in 1\,km$^2$} & \textbf{Suitable for} \\
 \hline
-10 & $\approx$600\,m  & $\approx$3                  & Continent routing       \\
-14 & $\approx$38\,m   & $\approx$700                & Neighborhood context    \\
-17 & $\approx$5\,m    & $\approx$4\,000             & Lane-level awareness    \\
-20 & $\approx$0.6\,m  & $\approx$3\,$\times 10^6$  & Sub-meter features      \\
-25 & $\approx$0.04\,m & $\approx$6\,$\times 10^8$  & Centimeter precision    \\
+10 & $\approx$9\,km     & $\approx$0.012              & Metropolitan context   \\
+13 & $\approx$1.1\,km   & $\approx$0.8                & Pre-training tile      \\
+14 & $\approx$560\,m    & $\approx$3                  & Neighborhood context   \\
+18 & $\approx$35\,m     & $\approx$800                & Coarse cell embedding  \\
+21 & $\approx$4.4\,m    & $\approx$5\,$\times 10^4$   & Lane-level awareness   \\
+25 & $\approx$0.27\,m   & $\approx$1.3\,$\times 10^7$ & Sub-meter features     \\
+27 & $\approx$0.07\,m   & $\approx$2.1\,$\times 10^8$ & Centimeter precision   \\
 \hline
 \end{tabular}
 \end{table}
 
-Processing the entire model input at level~25 is computationally
-infeasible: a 1-km$^2$ city tile contains $\approx 6 \times 10^8$
-level-25 cells, each requiring its own attention computation.
+Processing the entire model input at level~27 is computationally
+infeasible: a 1-km$^2$ city tile contains $\approx 2 \times 10^8$
+level-27 cells, each requiring its own attention computation.
 The resolution hierarchy therefore uses a
 \textbf{hierarchical token design}: each token encodes a coarse cell
 (for global context and efficient attention) plus a fine sub-cell
@@ -10582,9 +10584,9 @@ $\mathbf{E}_{\text{cell}} \in \mathbb{R}^{|\mathcal{C}| \times h}$
 very large and sparse, and the attention computation over all
 cells computationally intractable.
 In practice, different components of the system may operate at
-different levels simultaneously---for example, level~14
-($\approx$38\,m) for the coarse cell embedding providing
-neighbourhood context, level~17 ($\approx$5\,m) for the
+different levels simultaneously---for example, level~18
+($\approx$35\,m) for the coarse cell embedding providing
+neighbourhood context, level~21 ($\approx$4.4\,m) for the
 cross-attention geo-mask $\mathbf{M}_\mathcal{C}$, and a
 continuous ENU offset for sub-cell centimeter precision---analogous
 to how a postal address nests country, city, street, and building
@@ -10601,16 +10603,16 @@ chosen cell.
 Consider a waypoint on a lane boundary near the
 Arc de Triomphe in Paris at geodetic coordinates
 $(48.8738^\circ\,\text{N},\ 2.2950^\circ\,\text{E},\ 67.4\ \text{m})$.
-We tokenize it at level $\ell = 17$ (edge $\approx 5$\,m,
+We tokenize it at level $\ell = 21$ (edge $\approx 4.4$\,m,
 suitable for lane-level context).
 
 \begin{enumerate}
 
   \item \textbf{Cell assignment.}
   Converting to ECEF and applying the S2 face projection yields the
-  level-17 cell token \texttt{0x47c8cac} (a 64-bit S2 cell ID).
+  level-21 cell token \texttt{0x47e66fec74740000} (a 64-bit S2 cell ID).
   The centre of this cell is at
-  $(48.8737^\circ\,\text{N},\ 2.2951^\circ\,\text{E},\ 67.3\ \text{m})$.
+  $(48.8738^\circ\,\text{N},\ 2.2950^\circ\,\text{E},\ 67.3\ \text{m})$.
 
   \item \textbf{ENU offset computation.}
   The displacement from the cell centre to the waypoint, expressed
@@ -10618,16 +10620,16 @@ suitable for lane-level context).
   \[
     \boldsymbol{\delta}
     = \begin{pmatrix} \delta_E \\ \delta_N \\ \delta_U \end{pmatrix}
-    = \begin{pmatrix} -0.74 \\ +0.31 \\ +0.10 \end{pmatrix} \text{m}.
+    = \begin{pmatrix} +0.35 \\ +0.06 \\ +0.10 \end{pmatrix} \text{m}.
   \]
-  This lies well within the cell radius ($\approx 2.5$\,m),
+  This lies well within the cell radius ($\approx 2.2$\,m),
   satisfying the containment invariant
   (Equation~\ref{eq:containment}).
-  The offset norm $\|\boldsymbol{\delta}\| = 0.81$\,m satisfies the
+  The offset norm $\|\boldsymbol{\delta}\| = 0.37$\,m satisfies the
   5-cm precision requirement once projected through $\mathbf{W}_\delta$.
 
   \item \textbf{Positional embedding.}
-  With embedding dimension $h = 256$, the cell ID \texttt{0x47c8cac}
+  With embedding dimension $h = 256$, the cell ID \texttt{0x47e66fec74740000}
   is looked up in the learned table
   $\mathbf{E}_{\text{cell}} \in \mathbb{R}^{|\mathcal{C}| \times 256}$,
   yielding a 256-dimensional coarse embedding.
@@ -10639,12 +10641,12 @@ suitable for lane-level context).
     \text{pos\_emb}(\mathbf{x}_{\text{token}})
     =
     \underbrace{%
-      \mathbf{E}_{\text{cell}}(\texttt{0x47c8cac})
+      \mathbf{E}_{\text{cell}}(\texttt{0x47e66fec74740000})
     }_{\text{encodes ``lane block near Arc de Triomphe''}}
     +\;
     \underbrace{%
       \mathbf{W}_{\delta}\,
-      (-0.74,\; {+0.31},\; {+0.10})^{\!\top}
+      (+0.35,\; {+0.06},\; {+0.10})^{\!\top}
     }_{\text{encodes sub-cell geometry}}
     \label{eq:pos_emb}
   \end{equation}
@@ -10682,11 +10684,13 @@ embedding vector.
     \emph{(Left)} The sphere is projected onto a cube face and
     subdivided into a quadtree at three levels of refinement
     (S2 levels 0, 1, 2).
-    \emph{(Center)} Cells at level 12 serve as coarse tokens;
+    \emph{(Center)} Cells at a coarse level serve as tokens;
     each is annotated with its 64-bit S2 cell ID.
-    \emph{(Right)} Within one level-12 cell, a level-25 sub-grid
+    \emph{(Right)} Within one coarse cell, a fine sub-grid
     encodes centimeter-level position as a local ENU offset
-    $\boldsymbol{\delta}$ from the cell center.}
+    $\boldsymbol{\delta}$ from the cell center.  The levels
+    drawn are schematic; see Table~\ref{tab:s2_levels_2} for
+    the levels used in this chapter.}
   \label{fig:s2_hierarchy}
 \end{figure}
  
@@ -10711,16 +10715,16 @@ that makes cross-modal fusion possible.
 Before describing each modality's tokenization in detail, we
 establish what a \textbf{pre-training tile} is.  A tile is a fixed
 geographic region on the Earth's surface, defined by an S2 cell at a
-chosen coarse level.  At level 12, an S2 cell has an edge length of
-approximately 1.2 km (Table~\ref{tab:s2_levels}), covering roughly
-$1.4\ \text{km}^2$ of the Earth's surface.  This is the natural unit
+chosen coarse level.  At level 13, an S2 cell has an edge length of
+approximately 1.1 km (Table~\ref{tab:s2_levels_2}), covering roughly
+$1.3\ \text{km}^2$ of the Earth's surface.  This is the natural unit
 of pre-training data: for each tile, the model receives one satellite
 image crop and one LiDAR point cloud crop, both covering the same
 geographic footprint.
 
-As a concrete example, consider a level-12 S2 tile centered on the
+As a concrete example, consider a level-13 S2 tile centered on the
 7th arrondissement of Paris --- the neighborhood containing the Eiffel
-Tower.  The tile covers a $\approx 1.2 \times 1.2$ km square in the
+Tower.  The tile covers a $\approx 1.1 \times 1.1$ km square in the
 local ENU plane.  The same tile is queried independently in the
 satellite image archive and in the LiDAR archive, producing two
 sensor crops of the same physical region.  Both crops are expressed
@@ -10737,8 +10741,8 @@ our Paris tile example under each modality.
 
 \begin{table}[htbp]
   \centering
-  \caption{Token counts for a level-12 S2 pre-training tile
-    ($\approx 1.2 \times 1.2$ km) under satellite image and LiDAR
+  \caption{Token counts for a level-13 S2 pre-training tile
+    ($\approx 1.1 \times 1.1$ km) under satellite image and LiDAR
     pillar tokenization.  Image token count is fixed by tile size and
     patch size; LiDAR token count varies by scene density and counts
     only occupied pillars.}
@@ -10852,7 +10856,7 @@ its precise geographic location on the spheroid.
 
 \paragraph{Connection to Raw Data and Pre-training.}
 
-During pre-training, a level-12 S2 tile is selected by its cell ID,
+During pre-training, a level-13 S2 tile is selected by its cell ID,
 the corresponding GeoTIFF is retrieved from the archive
 (Section~\ref{sec:sensor_georef}), its pixels are rotated to the
 local ENU frame, and the $p \times p$ patch grid is computed.  Each
@@ -10949,7 +10953,7 @@ $\text{pos\_emb}(\cdot)$ is from Equation~\eqref{eq:pos_emb}.
 
 \paragraph{Connection to Raw Data and Pre-training.}
 
-During pre-training, the same level-12 S2 tile selected for the
+During pre-training, the same level-13 S2 tile selected for the
 satellite image crop is also queried in the LiDAR archive.  The
 corresponding LAS/LAZ file~\cite{asprs2019las} is loaded, its points
 are rotated from ECEF to the local ENU frame, the pillar grid is
@@ -11185,7 +11189,7 @@ is one pillar token produced by Equation~\eqref{eq:lidar_token}.
 \paragraph{Scale of the real problem.}
 
 To appreciate why the geometric mask is essential, consider the
-level-12 S2 tile centered on the 7th arrondissement of Paris
+level-13 S2 tile centered on the 7th arrondissement of Paris
 introduced in Table~\ref{tab:tile_example}.  At 0.5\,m pixel
 resolution with patch size $p = 16$, the tile produces
 $N_{\text{img}} = 22{,}500$ image patch tokens from a
@@ -12161,7 +12165,7 @@ Base Map SFT trains the model to generate canonical
 $\mathcal{V}_{\text{geo}}$ token sequences encoding road
 network topology, building footprints, and land use
 annotations from satellite imagery, optionally conditioned
-on an existing Base Map.  The input is a level-12 S2 tile
+on an existing Base Map.  The input is a level-13 S2 tile
 of satellite imagery $\mathcal{I}_{2D}$ (with Base Map
 conditioning context $\mathbf{T}^{\text{map}}$ prepended
 when available), and the target output is the
@@ -12177,7 +12181,7 @@ virtually every inhabited region of the Earth, and satellite
 imagery archives provide the corresponding sensor
 observations.  Constructing SFT pairs is therefore a data
 engineering task rather than an annotation task: for each
-level-12 S2 tile, retrieve the corresponding satellite
+level-13 S2 tile, retrieve the corresponding satellite
 imagery crop and the corresponding OSM data, apply the
 deserializer to convert the OSM content to a
 $\mathcal{V}_{\text{geo}}$ token sequence, and store the
@@ -12231,7 +12235,7 @@ $\mathcal{V}_{\text{geo}}$ token sequences encoding
 centimetre-accurate lane boundaries, road markings, traffic
 signs, and regulatory attributes from the fusion of satellite
 imagery and ground-vehicle LiDAR, optionally conditioned on
-a Base Map.  The input is a level-12 S2 tile containing
+a Base Map.  The input is a level-13 S2 tile containing
 both $\mathcal{I}_{2D}$ and $P$ (with Base Map conditioning
 $\mathbf{T}^{\text{map}}$ prepended when available), and the
 target is the $\mathcal{V}_{\text{geo}}$ serialization of
@@ -12401,7 +12405,7 @@ seams, and pole singularities from the model's input.
 The S2 geometry system projects the sphere onto a cube,
 subdivides it into approximately equal-area cells at
 resolutions from continental ($\ell=0$) to centimetre
-($\ell=25$), and linearizes the result using Hilbert curve
+($\ell=27$), and linearizes the result using Hilbert curve
 ordering (Equation~\ref{eq:hilbert_locality}).  Every
 spatially grounded data element --- satellite image patch,
 LiDAR pillar, Base Map waypoint, POI location --- is
