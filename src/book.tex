@@ -11853,6 +11853,38 @@ positions~\cite{min2022mae3d,pang2022masked}:
   \label{eq:mae_lid}
 \end{equation}
 
+Here $P_{\mathcal{M}} = \{\bar{\mathbf{p}}_{ij} : (i,j) \in
+\mathcal{M}_{\text{lid}}\}$ collects the centroids of the masked
+pillars, with $\bar{\mathbf{p}}_{ij} = (\bar{p}_e, \bar{p}_n,
+\bar{p}_u)$ as defined in Equation~\eqref{eq:pillar_centroid}.
+Because only occupied pillars produce tokens, every masked pillar is
+known to contain returns and no occupancy prediction is required for
+this objective.  The cross-modal objective below, which masks the
+entire LiDAR stream, does not share this property.
+
+The three components are not on comparable scales.  The horizontal
+centroid components are confined to their own grid cell and vary by
+at most $\Delta e / 2$ --- at $0.2$ m pillars, $\pm 0.1$ m --- while
+the vertical component spans the full height range of the scene.
+The loss is therefore computed on per-component normalized targets:
+\begin{equation}
+  \tilde{\mathbf{p}}_{ij} =
+  \left(
+    \frac{\bar{p}_e - c_e}{\Delta e / 2},\;
+    \frac{\bar{p}_n - c_n}{\Delta n / 2},\;
+    \frac{\bar{p}_u}{\sigma_u}
+  \right)
+  \label{eq:centroid_normalized}
+\end{equation}
+where $\sigma_u$ is a fixed height scale, for which we use
+$\sigma_u = 10$ m.  No vertical reference offset appears because
+$p_u$ is already expressed relative to the local ground plane.  The
+first two components lie in $[-1, 1]$ by the containment property of
+the pillar grid.  Without this normalization the objective
+degenerates into height regression, since the horizontal components
+contribute negligible gradient, and its magnitude is not comparable
+to that of Equation~\eqref{eq:mae_img} when the two are combined.
+
 These two objectives warm-start each encoder independently
 before cross-modal training begins, ensuring that each
 modality's representations are meaningful before they are
