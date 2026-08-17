@@ -10733,7 +10733,14 @@ edge lengths vary by roughly a factor of two within a level, so a
 fixed-extent ROI --- we use $1200 \times 1200$\,m throughout, which
 comfortably contains a level-13 cell --- keeps patch and pillar grid
 dimensions constant across tiles, which in turn keeps the image token
-count fixed as required for batching.
+count fixed as required for batching.  Where the patch or pillar
+footprint does not divide the ROI exactly, the grid is taken as the
+smallest whole number of patches covering it and therefore extends
+slightly beyond: at Sentinel-2 resolution a $p=16$ patch spans
+$160$\,m, so the $1200$\,m ROI yields an $8 \times 8$ grid spanning
+$1280$\,m.  The modality grids need not share an extent, since
+alignment between them is established by geodetic position
+(Section~\ref{sec:fusion}) rather than by grid index.
 
 As a concrete example, consider a level-13 S2 tile centered on the
 7th arrondissement of Paris --- the neighborhood containing the Eiffel
