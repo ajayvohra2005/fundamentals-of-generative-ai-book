@@ -10625,8 +10625,12 @@ suitable for lane-level context).
   This lies well within the cell radius ($\approx 2.2$\,m),
   satisfying the containment invariant
   (Equation~\ref{eq:containment}).
-  The offset norm $\|\boldsymbol{\delta}\| = 0.37$\,m satisfies the
-  5-cm precision requirement once projected through $\mathbf{W}_\delta$.
+  Because $\boldsymbol{\delta}$ is retained as a continuous
+  real-valued vector rather than being quantized, the waypoint's
+  position is represented exactly; the bound of
+  Equation~\eqref{eq:precision_requirement} constrains only encodings
+  that rely on the cell ID alone, which is precisely why the
+  hierarchical scheme pairs a coarse cell with a continuous offset.
 
   \item \textbf{Positional embedding.}
   With embedding dimension $h = 256$, the cell ID \texttt{0x47e66fec74740000}
@@ -10722,9 +10726,18 @@ of pre-training data: for each tile, the model receives one satellite
 image crop and one LiDAR point cloud crop, both covering the same
 geographic footprint.
 
+In practice the sensor crops are taken over a \textbf{region of
+interest} (ROI) of fixed metric extent, aligned to and centred on the
+tile's S2 cell, rather than over the cell boundary itself.  S2 cell
+edge lengths vary by roughly a factor of two within a level, so a
+fixed-extent ROI --- we use $1200 \times 1200$\,m throughout, which
+comfortably contains a level-13 cell --- keeps patch and pillar grid
+dimensions constant across tiles, which in turn keeps the image token
+count fixed as required for batching.
+
 As a concrete example, consider a level-13 S2 tile centered on the
 7th arrondissement of Paris --- the neighborhood containing the Eiffel
-Tower.  The tile covers a $\approx 1.1 \times 1.1$ km square in the
+Tower.  Its ROI covers a $1.2 \times 1.2$ km square in the
 local ENU plane.  The same tile is queried independently in the
 satellite image archive and in the LiDAR archive, producing two
 sensor crops of the same physical region.  Both crops are expressed
@@ -10741,8 +10754,8 @@ our Paris tile example under each modality.
 
 \begin{table}[htbp]
   \centering
-  \caption{Token counts for a level-13 S2 pre-training tile
-    ($\approx 1.1 \times 1.1$ km) under satellite image and LiDAR
+  \caption{Token counts for the $1.2 \times 1.2$ km ROI of a
+    level-13 S2 pre-training tile under satellite image and LiDAR
     pillar tokenization.  Image token count is fixed by tile size and
     patch size; LiDAR token count varies by scene density and counts
     only occupied pillars.}
@@ -10897,8 +10910,8 @@ solution is \textbf{pillar tokenization}, introduced in the
 PointPillars architecture~\cite{lang2019pointpillars}.  We define a
 regular Cartesian grid over the local ENU horizontal $(e, n)$ plane,
 with cell size $(\Delta e, \Delta n)$ --- typically $0.16$--$0.2$ m
-per cell --- covering a fixed region of interest, for example
-$[-100\text{m},\, +100\text{m}]$ in both $e$ and $n$.  Each grid
+per cell --- covering the tile's fixed region of interest,
+$[-600\text{m},\, +600\text{m}]$ in both $e$ and $n$.  Each grid
 cell $(i, j)$ defines a vertical \textbf{pillar}: an infinite column
 extending in the $u$ (Up) direction above the horizontal cell.  All
 LiDAR points whose $(e, n)$ coordinates fall within cell $(i, j)$
