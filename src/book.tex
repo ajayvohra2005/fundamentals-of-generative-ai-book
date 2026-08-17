@@ -10927,8 +10927,26 @@ are assigned to that pillar, regardless of their $u$ coordinate.
 Let $\mathcal{P}_{ij}$ denote the set of points assigned to pillar
 $(i, j)$.  Each point $\mathbf{p} = (p_e, p_n, p_u, I) \in
 \mathcal{P}_{ij}$ is augmented with its offset from the within-pillar
-centroid $(\bar{p}_e, \bar{p}_n)$ and its offset from the pillar
-center $(c_e, c_n)$ in the ENU grid.  A small shared MLP followed by
+centroid $(\bar{p}_e, \bar{p}_n, \bar{p}_u)$ and its horizontal offset
+from the pillar center $(c_e, c_n)$ in the ENU grid.  The centroid is
+the arithmetic mean of the coordinates of the points assigned to that
+pillar:
+\begin{equation}
+  \bar{p}_e = \frac{1}{|\mathcal{P}_{ij}|}
+    \sum_{\mathbf{p} \in \mathcal{P}_{ij}} p_e,
+  \quad
+  \bar{p}_n = \frac{1}{|\mathcal{P}_{ij}|}
+    \sum_{\mathbf{p} \in \mathcal{P}_{ij}} p_n,
+  \quad
+  \bar{p}_u = \frac{1}{|\mathcal{P}_{ij}|}
+    \sum_{\mathbf{p} \in \mathcal{P}_{ij}} p_u
+  \label{eq:pillar_centroid}
+\end{equation}
+Unlike the pillar center $(c_e, c_n)$, which is fixed by the grid
+index $(i,j)$, the centroid is data-dependent: it coincides with the
+center for a uniformly populated pillar and shifts toward the
+occupied side for a pillar clipped by a building edge or an occlusion
+boundary.  A small shared MLP followed by
 element-wise max pooling --- the PointNet~\cite{qi2017pointnet}
 aggregation principle --- maps all points in the pillar to a
 fixed-dimensional feature vector:
@@ -10937,20 +10955,34 @@ fixed-dimensional feature vector:
   \mathbf{f}_{ij} = \max_{\mathbf{p} \in \mathcal{P}_{ij}}
     \mathrm{MLP}_\theta
     \!\left(
-      \bigl[p_e - \bar{p}_e,\; p_n - \bar{p}_n,\; p_u,\; I,\;
-      p_e - c_e,\; p_n - c_n\bigr]
+      \bigl[p_e - \bar{p}_e,\; p_n - \bar{p}_n,\; p_u - \bar{p}_u,\;
+      p_u,\; I,\; p_e - c_e,\; p_n - c_n\bigr]
     \right)
   \label{eq:pillar}
 \end{equation}
 
-The first two components encode the point's horizontal offset from
-the pillar centroid (local within-pillar structure); $p_u$ encodes
-absolute height above the ground plane; $I$ is reflected intensity;
-and the final two components encode the point's offset from the
-pillar center in the ENU grid (global scene context).  The
-element-wise max retains the most salient feature at each output
-dimension across all returns in the pillar, encoding the full
-vertical distribution of returns without explicit pooling over $u$.
+The first three components encode the point's offset from the pillar
+centroid in all three ENU axes (local within-pillar structure);
+$p_u$ encodes absolute height above the ground plane; $I$ is
+reflected intensity; and the final two components encode the point's
+horizontal offset from the pillar center in the ENU grid (global
+scene context).  The element-wise max retains the most salient
+feature at each output dimension across all returns in the pillar,
+encoding the full vertical distribution of returns without explicit
+pooling over $u$.
+
+This seven-dimensional encoding follows the decorated-point
+formulation of PointPillars~\cite{lang2019pointpillars} with one
+omission: we do not retain the absolute horizontal coordinates
+$(p_e, p_n)$, because absolute horizontal position is supplied to the
+model by the S2 positional embedding of
+Equation~\eqref{eq:lidar_token} rather than by the pillar feature.
+The absolute height $p_u$ is retained, since the pillar center
+$(c_e, c_n)$ is purely horizontal and the positional embedding
+therefore carries no elevation.  For a pillar containing a single
+return the three centroid offsets vanish identically; this is the
+expected behaviour for a pillar with no internal structure to
+describe.
 
 \paragraph{S2-Based Positional Embedding.}
 
