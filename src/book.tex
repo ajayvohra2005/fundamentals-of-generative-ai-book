@@ -11545,12 +11545,30 @@ one of two roles.  \textbf{Sensor observations} --- satellite
 imagery tokens $\mathbf{T}^{\text{img}}$ and LiDAR pillar tokens
 $\mathbf{T}^{\text{lid}}$ --- are the primary inputs from which
 the model derives map representations.  These tokens are
-\textbf{partially masked} during pre-training: a fraction
-$\rho_{\text{img}}$ of image patches and a fraction
-$\rho_{\text{lid}}$ of pillars are replaced by a learned
-\texttt{[MASK]} embedding, and the model is trained to reconstruct
-the masked values from unmasked context, learning the statistical
-structure of the physical world without explicit supervision.
+\textbf{partially masked} during pre-training: fractions
+$\rho_{\text{img}}$ of image patches and $\rho_{\text{lid}}$ of
+pillars --- determined by the modality sampling of
+Section~\ref{sec:pretraining_objectives} --- have their feature
+term replaced by a learned \texttt{[MASK]} embedding, and the
+model is trained to reconstruct the masked values from unmasked
+context.
+
+Masking replaces the feature term only.  Recalling the token form
+of Equation~\eqref{eq:universal_token}, a masked token is
+\begin{equation}
+  \mathbf{t}_i = \mathbf{e}_{\texttt{[MASK]}}
+    + \text{pos\_emb}(c_\ell, \boldsymbol{\delta}_i),
+  \qquad i \in \mathcal{M}
+  \label{eq:masked_token}
+\end{equation}
+so that the geodetic position survives masking intact.  This is
+not a detail of implementation.  Were the positional term also
+replaced, every masked token in a tile would be the same vector,
+the model would have no way to determine \emph{which} location it
+was being asked to reconstruct, and the reconstruction objective
+would be ill-posed.  A masked token still asserts that something
+exists at a specific S2 cell and sub-cell offset; it withholds
+only what that something is.
 \textbf{Conditioning context} --- Base Map tokens
 $\mathbf{T}^{\text{map}}$ and POI tokens $\mathbf{T}^{\text{poi}}$
 --- encodes structured prior knowledge that is \textbf{never
@@ -11821,7 +11839,7 @@ Transformer architecture.
 
 The pre-training objectives force the backbone to learn the deep
 structural priors of the physical world from raw sensor data alone,
-without any map annotation.  All five objectives operate on the
+without any map annotation.  All five capabilities operate on the
 sensor observation tokens --- image patches and LiDAR pillars ---
 conditioned on whatever conditioning context tokens are present.
 The conditioning context tokens $\mathbf{T}^{\text{map}}$ and
@@ -12213,7 +12231,9 @@ removed most of the weights it would be introduced to set.
       \State Patchify $\mathcal{I}^{(b)}_{2D}$
         $\to \mathbf{T}^{\text{img}}$
       \State Add positional embeddings
-        (Equation~\eqref{eq:pos_emb}) to all token streams
+        (Equation~\eqref{eq:pos_emb}) to all token streams;
+        these are retained under masking
+        (Equation~\eqref{eq:masked_token})
       \State Assemble input sequence
         (Equation~\eqref{eq:input_sequence})
       \State Draw per-modality visible shares
@@ -12247,6 +12267,176 @@ removed most of the weights it would be introduced to set.
       \bigr]$
   \end{algorithmic}
 \end{algorithm}
+
+% ------------------------------------------------------------------
+\subsection{Assembling a Pre-training Batch}
+\label{sec:batch_assembly}
+% ------------------------------------------------------------------
+
+The preceding sections define the token streams, the positional
+embedding, the masking scheme and the losses.  This section
+assembles them into the concrete object a training step consumes:
+a fixed-shape batch of token sequences.  The values given are
+defaults, chosen to be mutually consistent; the structure matters
+more than the particular numbers, and the arithmetic is shown so
+that a different budget can be derived.
+
+\paragraph{Sequence layout.}
+
+The sequence is divided into blocks of fixed length, one per
+stream, in the order established by
+Equation~\eqref{eq:input_sequence}.  Fixing the block lengths
+rather than the total gives every tile the same layout: a given
+index always belongs to the same stream, whatever the tile
+contains.
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabular}{lrl}
+    \hline
+    \textbf{Block} & \textbf{Budget} & \textbf{Basis} \\
+    \hline
+    $\mathbf{T}^{\text{map}}$ & 1\,024 &
+      waypoints at $\Delta s \approx 70$\,m (level 17) \\
+    $\mathbf{T}^{\text{poi}}$ & 128 &
+      one token per POI; usually mostly padding \\
+    $\mathbf{T}^{\text{img}}$ & 5\,632 &
+      $75 \times 75 = 5\,625$ patches, $+7$ padding \\
+    $\mathbf{T}^{\text{lid}}$ & 5\,504 &
+      2\,752 occupied $+$ 2\,752 sampled empty \\
+    \hline
+    Total & 12\,288 & \\
+    \hline
+  \end{tabular}
+  \caption{Default per-block token budgets for a $1.2 \times 1.2$
+    km pre-training ROI.  Image tokens assume $1$ m imagery with
+    $p = 16$, so each patch spans $16$ m and the grid divides the
+    ROI exactly.  LiDAR tokens assume a $2$ m pillar grid.}
+  \label{tab:seq_layout}
+\end{table}
+
+The image budget determines which sensor configurations fit a
+single sequence.  At $1$ m ground sample distance with $p = 16$ a
+patch spans $16$ m, and $1200 / 16 = 75$ divides the ROI exactly.
+Finer imagery does not fit: at $0.5$ m the same patch size yields
+$150 \times 150 = 22\,500$ tokens
+(Table~\ref{tab:tile_example}), four times the budget.  Working
+at that resolution therefore requires either sub-tiling the ROI
+or a larger patch size --- a constraint of the sequence budget,
+not of the tokenization.  The pillar grid is likewise coarser
+here than the $0.2$ m used for HD Map work: at $2$ m spacing a
+dense urban tile yields on the order of $10^3$ occupied cells,
+which fits, whereas $0.2$ m yields on the order of $10^5$, which
+does not.  Pre-training and HD Map inference operate at different
+spatial resolutions for this reason.
+
+\paragraph{Two distinct masks.}
+
+Assembly produces two boolean vectors over the sequence, and
+conflating them is a common source of error because they act in
+opposite directions.
+
+The \textbf{padding mask} marks positions that do not correspond
+to anything real: unused capacity in a block that the tile did
+not fill.  These positions hold a learned \texttt{[PAD]}
+embedding, are excluded from attention by an additive mask, and
+contribute no loss.  A model that reconstructs padding is
+learning the shape of its own buffers.
+
+The \textbf{reconstruction mask} $\mathcal{M}$ marks positions
+that correspond to something real which has been deliberately
+hidden.  These hold $\mathbf{e}_{\texttt{[MASK]}}$ plus their
+positional embedding
+(Equation~\eqref{eq:masked_token}), participate fully in
+attention, and are precisely the positions at which loss is
+computed.
+
+\paragraph{Empty-cell queries.}
+
+The occupancy term of Equation~\eqref{eq:cross_modal_loss}
+requires the model to decide whether a cell contains returns,
+which is only meaningful if some queried cells are empty.  Empty
+pillars produce no token, so they must be injected: assembly
+draws a random sample of unoccupied cells from the pillar grid,
+equal in number to the occupied cells retained, and places a
+masked token at each, carrying that cell's positional embedding
+and no feature.  These are reconstruction-masked, not padded ---
+their occupancy label is $0$ and it is a target, not an absence.
+Half the LiDAR budget is reserved for them.
+
+\paragraph{Truncation and its bias.}
+
+Where a tile exceeds a block budget the excess is truncated, and
+this is not neutral.  Truncation removes content exactly where
+content is densest, so whatever the serialization order places
+last becomes systematically invisible in the tiles that contain
+the most of it.  Two mitigations are worth applying: order
+tokens within a block by Hilbert index
+(Equation~\eqref{eq:hilbert_locality}) so that truncation removes
+a contiguous geographic region rather than an arbitrary
+semantic class, and record the truncation rate per tile so that
+the bias can be measured rather than assumed absent.
+
+\paragraph{Assembly recipe.}
+
+For a single tile:
+
+\begin{enumerate}
+\item Resolve the tile's level-13 cell and its $1200$ m ROI;
+  fetch whichever modalities are available.
+\item Tokenize each available stream: map and POI
+  (Section~\ref{sec:conditioned-context}), image patches
+  (Section~\ref{sec:img_tokenization}), occupied pillars
+  (Section~\ref{sec:pillars}).
+\item Order tokens within each block by Hilbert index of the
+  containing S2 cell.
+\item Truncate to the block budget, or pad with
+  \texttt{[PAD]}; record the truncation rate.
+\item Sample unoccupied pillar cells and append them to the
+  LiDAR block as empty-cell queries.
+\item Add positional embeddings
+  (Equation~\eqref{eq:pos_emb}) to every token, including
+  empty-cell queries.
+\item Draw the per-modality visible shares from
+  $\mathrm{Dir}(\alpha)$ over the modalities present, and set
+  $\mathcal{M}$ accordingly over the sensor blocks; conditioning
+  context is never masked.
+\item Replace the feature term at masked positions with
+  $\mathbf{e}_{\texttt{[MASK]}}$, retaining the positional term
+  (Equation~\eqref{eq:masked_token}).
+\end{enumerate}
+
+\paragraph{Batch composition.}
+
+Because block lengths are fixed, tiles of any composition stack
+directly into a $B \times 12\,288 \times h$ tensor: a tile
+without LiDAR contributes an entirely padded LiDAR block and
+contributes nothing to
+$\mathcal{L}^{\text{rec}}_{\text{lid}}$ or
+$\mathcal{L}_{\text{align}}$, exactly as
+Equation~\eqref{eq:total_loss} requires.  Mixing paired and
+imagery-only tiles in one batch is therefore correct but
+wasteful, since padded blocks occupy memory and contribute no
+gradient.  Grouping tiles by modality availability within a
+batch recovers that capacity at the cost of correlating batch
+composition with geography --- paired tiles are concentrated
+where LiDAR surveys exist --- which argues for grouping at the
+level of the sampler rather than the epoch.
+
+\paragraph{Consistency of levels.}
+
+Three S2 levels appear in the pre-training configuration and
+serve different purposes.  The tile is level 13.  The contrastive
+matching level $\ell_c$ of
+Equation~\eqref{eq:contrastive} should be chosen so that a cell
+edge approximates an image patch footprint: at the $1$ m default
+a patch spans $16$ m, giving $\ell_c = 19$
+($\approx 17.6$ m).  The coordinate level used when serializing
+map output is independent of both and is discussed in
+Section~\ref{sec:sft-map-generation}.  A change of imagery
+resolution changes $\ell_c$ and should prompt a check of the
+image budget.
 
 \begin{figure}[htbp]
   \centering
@@ -12800,14 +12990,14 @@ architecture.
 
 \textbf{Self-supervised pre-training}
 (Section~\ref{sec:pretraining_objectives}).
-Five complementary objectives
-(Equation~\ref{eq:total_loss}) learn the physical priors
-of the world from raw sensor data without map annotation:
-within-modality masked reconstruction warms up each encoder;
-cross-modal reconstruction forces the model to associate
-visual texture with 3D geometry; and contrastive alignment
-ensures the embedding spaces of both modalities are
-geometrically commensurate.
+Five complementary capabilities, trained through the single
+masked objective of Equation~\ref{eq:total_loss}, learn the
+physical priors of the world from raw sensor data without map
+annotation: within-modality reconstruction supplies the training
+signal wherever only one modality is available; cross-modal
+reconstruction forces the model to associate visual texture with
+3D geometry; and contrastive alignment ensures the embedding
+spaces of both modalities are geometrically commensurate.
 
 \textbf{Canonical output and supervised fine-tuning}
 (Section~\ref{sec:sft-map-generation}).
