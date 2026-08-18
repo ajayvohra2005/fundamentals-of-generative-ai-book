@@ -11820,8 +11820,9 @@ attend to when reconstructing masked sensor observations.
 
 \paragraph{Within-modality masked reconstruction.}
 
-As a warm-up objective, standard masked autoencoding is applied
-within each sensor modality separately.
+Standard masked autoencoding is applied within each sensor
+modality separately.  This is the objective available on every
+tile, whichever modalities that tile happens to carry.
 
 \textbf{Image MAE.}  A fraction $\rho_{\text{img}}$ of image
 patches are masked and the model reconstructs the masked pixel
@@ -11885,10 +11886,17 @@ degenerates into height regression, since the horizontal components
 contribute negligible gradient, and its magnitude is not comparable
 to that of Equation~\eqref{eq:mae_img} when the two are combined.
 
-These two objectives warm-start each encoder independently
-before cross-modal training begins, ensuring that each
-modality's representations are meaningful before they are
-asked to align with the other.
+These two objectives are not merely preparatory.  Satellite
+coverage is global and refreshed every few days, whereas airborne
+LiDAR surveys individual corridors, so the great majority of tiles
+in a pre-training corpus carry imagery alone.  For such tiles
+$\mathcal{L}_{\text{img}}$ is not a warm-up but the only objective
+that can be evaluated at all: with no LiDAR returns there is no
+geometric target to reconstruct and no pair to contrast.  The
+within-modality objectives are therefore the primary training
+signal over most of the corpus, and the cross-modal objectives
+below are the specialised ones, available only where paired
+observations exist.
 
 \paragraph{Cross-modal reconstruction.}
 
@@ -12059,29 +12067,72 @@ high similarity to non-matching tiles.
 
 \paragraph{The combined pre-training objective.}
 
-The full pre-training objective is a weighted combination of
-all five losses:
+The four reconstruction objectives above are presented separately
+because each names a distinct capability, but they need not be
+trained as four separately weighted terms.  They differ only in
+which tokens are visible when the reconstruction is demanded:
+$\mathcal{L}_{\text{img}}$ and $\mathcal{L}_{\text{lid}}$ hide a
+fraction of one modality while the other remains available,
+$\mathcal{L}_{\text{geo}}$ hides the LiDAR stream entirely, and
+$\mathcal{L}_{\text{sem}}$ hides the imagery entirely.  All four
+are therefore instances of a single objective under different
+masks.
+
+We adopt the multi-modal masking scheme of
+MultiMAE~\cite{bachmann2022multimae}.  For each tile, a fixed
+visible-token budget is divided among the available modalities by
+drawing the per-modality shares from a symmetric Dirichlet
+distribution with concentration $\alpha$, after which tokens are
+sampled uniformly at random without replacement within each
+modality.  Each modality has its own decoder, which reconstructs
+that modality's masked tokens from the shared encoding.  The
+objective reduces to two reconstruction terms and the alignment
+term:
 
 \begin{equation}
   \mathcal{L}_{\text{total}} =
-    \lambda_1 \mathcal{L}_{\text{img}}
-    + \lambda_2 \mathcal{L}_{\text{lid}}
-    + \lambda_3 \mathcal{L}_{\text{geo}}
-    + \lambda_4 \mathcal{L}_{\text{sem}}
-    + \lambda_5 \mathcal{L}_{\text{align}}
+    \mathcal{L}^{\text{rec}}_{\text{img}}
+    + \mathcal{L}^{\text{rec}}_{\text{lid}}
+    + \lambda_{\text{align}} \mathcal{L}_{\text{align}}
   \label{eq:total_loss}
 \end{equation}
 
-$\lambda_3$ (cross-modal 3D reconstruction) receives the
-highest weight because it is the objective most directly
-aligned with the downstream task of map geometry prediction.
-$\mathcal{L}_{\text{align}}$ receives the second-highest
-weight to enforce embedding alignment, which is critical for
-zero-shot transfer to unseen geographies.  The within-modality
-losses $\mathcal{L}_{\text{img}}$ and
-$\mathcal{L}_{\text{lid}}$ receive lower weights, serving
-primarily to stabilise training in the early warm-up phase
-before the cross-modal objectives dominate.
+where $\mathcal{L}^{\text{rec}}_{\text{img}}$ uses the pixel
+target of Equation~\eqref{eq:mae_img} and
+$\mathcal{L}^{\text{rec}}_{\text{lid}}$ the occupancy and
+geometric targets of
+Equation~\eqref{eq:cross_modal_loss}, in both cases applied to
+whichever tokens the sampled mask happened to hide.
+
+Three properties follow.  First, the balance between
+within-modality and cross-modal training is now governed by a
+single interpretable parameter: a small $\alpha$ concentrates the
+visible budget on one modality and yields predominantly
+cross-modal samples, while a large $\alpha$ yields balanced ones.
+Ablations on multi-modal masked models report that uniform
+sampling over the simplex performs well on
+average~\cite{mizrahi20234m}, and we take $\alpha = 1$ as the
+default.  Second, modality availability requires no special
+handling: a tile carrying no LiDAR contributes no LiDAR tokens,
+so $\mathcal{L}^{\text{rec}}_{\text{lid}}$ and
+$\mathcal{L}_{\text{align}}$ are simply absent for that tile and
+the objective reduces to image reconstruction alone.  Third, the
+number of weights to be chosen falls from five to one.
+
+Because the reconstruction targets are normalized ---
+per-patch for imagery and per-component for pillar geometry via
+Equation~\eqref{eq:centroid_normalized} --- the two reconstruction
+terms are of comparable magnitude and are combined without
+weights.  Only the contrastive term, which is a log-probability
+rather than a normalized error, carries an explicit coefficient.
+Where hand-tuning proves inadequate, the homoscedastic
+uncertainty weighting of Kendall et
+al.~\cite{kendall2018multitask}, which learns a scale per loss and
+includes a logarithmic term to prevent any weight from collapsing
+to zero, is the natural alternative.  We do not adopt it by
+default: the evidence that elaborate multi-task weighting
+outperforms a plain sum is weak, and unification has already
+removed most of the weights it would be introduced to set.
 
 \begin{algorithm}[H]
   \caption{GFM Pre-training Step (single batch)}
@@ -12092,8 +12143,8 @@ before the cross-modal objectives dominate.
           P^{(b)},\;
           \mathbf{T}^{\text{map},(b)},\;
           \mathbf{T}^{\text{poi},(b)})\}_{b=1}^B$;
-      masking ratios $\rho_{\text{img}}, \rho_{\text{lid}}$;
-      loss weights $\lambda_1,\ldots,\lambda_5$
+      visible-token budget; Dirichlet concentration $\alpha$;
+      alignment weight $\lambda_{\text{align}}$
     \For{$b = 1$ to $B$}
       \State Convert tile coordinates to ECEF via
         Equation~\eqref{eq:ecef}
@@ -12109,10 +12160,11 @@ before the cross-modal objectives dominate.
         (Equation~\eqref{eq:pos_emb}) to all token streams
       \State Assemble input sequence
         (Equation~\eqref{eq:input_sequence})
-      \State Sample masks $\mathcal{M}_{\text{img}},
-        \mathcal{M}_{\text{lid}}$ with ratios
-        $\rho_{\text{img}}, \rho_{\text{lid}}$
-        on sensor observation tokens only
+      \State Draw per-modality visible shares
+        $\sim \mathrm{Dir}(\alpha)$ over the modalities present
+        in tile $b$; sample masks
+        $\mathcal{M}_{\text{img}}, \mathcal{M}_{\text{lid}}$
+        accordingly, on sensor observation tokens only
       \State Compute $\widetilde{\mathbf{T}}^{\text{img}}$,
         $\widetilde{\mathbf{T}}^{\text{lid}}$ via
         cross-attention
@@ -12120,30 +12172,22 @@ before the cross-modal objectives dominate.
         \eqref{eq:lid2img_attn})
       \State Compute fused embedding $\mathbf{T}^{\text{geo}}$
         via Equation~\eqref{eq:geo_embedding}
-      \State Decode masked patches
-        $\to \mathcal{L}_{\text{img}}$
+      \State Decode masked image patches
+        $\to \mathcal{L}^{\text{rec}}_{\text{img}}$
         (Eq.~\eqref{eq:mae_img})
-      \State Decode masked pillars
-        $\to \mathcal{L}_{\text{lid}}$
-        (Eq.~\eqref{eq:mae_lid})
-      \State Decode full $P^{(b)}$ from image-only encoding
-        $\to \mathcal{L}_{\text{geo}}$
-        (Eq.~\eqref{eq:cross_modal_loss})
-      \State Decode full $\mathcal{I}^{(b)}_{2D}$ from
-        LiDAR-only encoding
-        $\to \mathcal{L}_{\text{sem}}$
-        (Eq.~\eqref{eq:cross_modal_sym})
-      \State Compute tile embeddings; contrastive loss
+      \State \textbf{if} tile $b$ has LiDAR \textbf{then}
+        decode masked pillar cells and sampled empty cells
+        $\to \mathcal{L}^{\text{rec}}_{\text{lid}}$
+        (Eq.~\eqref{eq:cross_modal_loss});
+        compute tile embeddings and contrastive loss
         $\to \mathcal{L}_{\text{align}}$
         (Eq.~\eqref{eq:contrastive})
     \EndFor
     \State Update:
       $\nabla_\theta\bigl[
-        \lambda_1\mathcal{L}_{\text{img}}
-        + \lambda_2\mathcal{L}_{\text{lid}}
-        + \lambda_3\mathcal{L}_{\text{geo}}
-        + \lambda_4\mathcal{L}_{\text{sem}}
-        + \lambda_5\mathcal{L}_{\text{align}}
+        \mathcal{L}^{\text{rec}}_{\text{img}}
+        + \mathcal{L}^{\text{rec}}_{\text{lid}}
+        + \lambda_{\text{align}}\mathcal{L}_{\text{align}}
       \bigr]$
   \end{algorithmic}
 \end{algorithm}
@@ -12151,15 +12195,18 @@ before the cross-modal objectives dominate.
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=0.88\textwidth]{images/gfm_pretraining.png}
-  \caption{The five self-supervised pre-training objectives for
-    the GFM.  Within-modality losses (top left and right)
-    warm-start each encoder independently.  Cross-modal
-    reconstruction losses (centre arrows) force the model to
-    learn inter-modality structural priors.  The contrastive
-    alignment loss (bottom) aligns the embedding spaces of
-    both streams.  Conditioning context tokens (Base Map, POI)
-    are prepended to the input sequence and are never masked
-    or reconstructed.}
+  \caption{The five self-supervised pre-training capabilities for
+    the GFM.  Within-modality reconstruction (top left and right)
+    supplies the training signal wherever only one modality is
+    available.  Cross-modal reconstruction (centre arrows) forces
+    the model to learn inter-modality structural priors.  The
+    contrastive alignment loss (bottom) aligns the embedding
+    spaces of both streams.  Conditioning context tokens (Base
+    Map, POI) are prepended to the input sequence and are never
+    masked or reconstructed.  The four reconstruction
+    capabilities are trained as a single masked objective under
+    Dirichlet modality sampling, as described in the text; they
+    are drawn separately here to make each capability explicit.}
   \label{fig:pretraining_objectives}
 \end{figure}
 
@@ -12978,6 +13025,15 @@ Y.~Pang, W.~Wang, F.~E.~H. Tay, W.~Liu, Y.~Tian, and L.~Yuan, ``Masked autoencod
  
 \bibitem{min2022mae3d}
 Z.~Min, Y.~Zhou, X.~Yang, J.~Li, G.~Li, and Y.~Yang, ``Occupancy-MAE: Self-supervised pre-training large-scale LiDAR point clouds with masked occupancy autoencoders,'' \textit{arXiv preprint arXiv:2206.09900}, 2022.
+ 
+\bibitem{bachmann2022multimae}
+R.~Bachmann, D.~Mizrahi, A.~Atanov, and A.~Zamir, ``MultiMAE: Multi-modal multi-task masked autoencoders,'' in \textit{European Conference on Computer Vision (ECCV)}, pp.~348--367, 2022.
+ 
+\bibitem{mizrahi20234m}
+D.~Mizrahi, R.~Bachmann, O.~F. Kar, T.~Yeo, M.~Gao, A.~Dehghan, and A.~Zamir, ``4M: Massively multimodal masked modeling,'' in \textit{Advances in Neural Information Processing Systems (NeurIPS)}, 2023.
+ 
+\bibitem{kendall2018multitask}
+A.~Kendall, Y.~Gal, and R.~Cipolla, ``Multi-task learning using uncertainty to weigh losses for scene geometry and semantics,'' in \textit{Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, pp.~7482--7491, 2018.
  
 \bibitem{hess2023masked}
 G.~Hess, J.~Jaxing, E.~Svensson, D.~Hagerman, C.~Petersson, and L.~Svensson, ``Masked autoencoder for self-supervised pre-training on LiDAR point clouds,'' in \textit{Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV) Workshops}, pp.~350--359, 2023.
