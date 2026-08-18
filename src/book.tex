@@ -12335,6 +12335,17 @@ serializer, not a new model.  We define the canonical vocabulary as:
   $\boldsymbol{\delta} \in \mathbb{R}^3$ encoded via
   Equation~\eqref{eq:token_design}, recovering centimetre-level
   precision within a computationally tractable vocabulary.
+  The offset is itself quantized, since a token stream cannot
+  carry a real number: we follow the 8-bit-per-axis convention
+  of PolyGen~\cite{nash2020polygen}, which reports it as a good
+  balance between fidelity and sequence length.  At $\ell = 20$
+  a cell edge is $8.79$ m, so $256$ bins give a bin width of
+  $3.4$ cm and a worst-case quantization error of $1.7$ cm.
+  This is why the bound of
+  Equation~\eqref{eq:precision_requirement} is not binding on
+  the serialized output: quantized continuous offsets reach
+  centimetre accuracy at a far coarser cell level than cell
+  identifiers alone could.
 
 \item $\mathcal{V}_{\text{sem}}$: semantic label tokens
   encoding the category and attributes of each map feature,
@@ -12415,6 +12426,103 @@ complex intersection polygon uses as many tokens as it has
 vertices.  The model is trained with teacher-forced
 next-token prediction and a standard cross-entropy
 objective~\cite{liao2022maptr}.
+
+\paragraph{Canonical ordering.}
+
+A sequence model requires that each map admit exactly one
+serialization.  This is not automatic.  Liao et
+al.~\cite{liao2022maptr} identify the difficulty precisely:
+representing map elements as directed polylines and predicting
+their points in sequence incurs a \emph{definition ambiguity},
+because every element must then have an explicit start point and
+direction, and for closed shapes such as pedestrian crossings, or
+for lines such as the divider between opposing lanes, no
+reasonable definition exists.  The ambiguity is not marginal --- a
+polyline with $N$ points admits two equivalent permutations and a
+closed polygon $2N$ --- and it is consequential: without a fixed
+convention the model is penalized for emitting a correct map in a
+non-matching order, and expends capacity learning an arbitrary
+convention rather than geography.  VectorMapNet, the
+autoregressive member of this family, is reported to be sensitive
+to the direction of its point
+sequences~\cite{liu2023vectormapnet}.
+
+The serializer must therefore impose a canonical order on
+features within a tile, on waypoints within a feature, and on the
+choice of starting vertex for closed polygons.  Which order to
+impose is an open question, and we set it out below alongside
+three further questions that the canonical form raises.
+
+\paragraph{Open questions in canonical serialization.}
+
+\begin{enumerate}
+\item \textbf{Choice of canonical order.}  Mesh generation sorts
+  lexicographically: PolyGen~\cite{nash2020polygen} orders
+  vertices from lowest to highest by the vertical axis, breaking
+  ties by the remaining axes, and orders faces by lowest vertex
+  index.  A geospatial model has an alternative its own
+  machinery supplies: ordering by Hilbert index over S2 cells
+  (Equation~\eqref{eq:hilbert_locality}) is equally canonical but
+  additionally locality-preserving, so features adjacent in the
+  sequence are adjacent on the ground.  A third option abandons
+  canonicalization: the permutation-equivalent modelling
+  of~\cite{liao2022maptr} represents an element as a point set
+  together with its group of equivalent permutations and
+  evaluates the loss over that group.  This suits a parallel
+  regressor but transfers poorly to an autoregressive decoder,
+  where it would require marginalizing over $2N$ orderings per
+  element.
+
+\item \textbf{Encoding of junctions.}  Connectivity is recovered
+  implicitly above, from two ways sharing a coordinate token.
+  Under quantization this demands that both ways' node
+  coordinates fall in the same cell \emph{and} the same offset
+  bin; a discrepancy of one bin --- $3.4$ cm at $\ell = 20$ ---
+  silently deletes the junction.  For a road network, whose
+  primary property is connectivity, this places the most
+  important structure in the output at the mercy of two
+  independently quantized values agreeing exactly.  Candidate
+  remedies: snap node coordinates to a common quantized value
+  during serialization within a stated tolerance; introduce
+  explicit junction-reference tokens naming a previously emitted
+  node; or reconstruct the graph after decoding by clustering
+  endpoints.  The first retains the present design and shifts the
+  burden to the deserializer, the second makes connectivity
+  explicit at the cost of a referencing mechanism, and the third
+  removes it from the model altogether.
+
+\item \textbf{Features spanning tile boundaries.}  A motorway
+  crosses hundreds of tiles, but a tile's output covers only its
+  own extent, so such a feature is emitted as disconnected
+  fragments that must later be reassembled.  Neither the mesh
+  generation literature, which produces single objects, nor
+  online HD mapping, which produces ego-centric local maps,
+  addresses this.  Candidate approaches: emit clipped fragments
+  and stitch on shared boundary coordinates, which reduces to the
+  previous question at tile edges; emit an explicit continuation
+  token when a feature leaves the tile, so that a stitcher knows
+  which fragments to seek; or overlap adjacent tiles and
+  de-duplicate, trading redundant computation for simpler
+  merging.
+
+\item \textbf{Ill-formed sequences.}  Nothing in the vocabulary
+  prevents the model from emitting \texttt{[END\_WAY]} before
+  \texttt{[START\_WAY]}, a polygon with two vertices, or a
+  semantic token where a coordinate is expected.  Candidate
+  approaches: constrained decoding, masking illegal
+  continuations against a grammar, which guarantees
+  well-formedness at the cost of implementing the grammar;
+  repair in the serializer, which is simpler but silently alters
+  the model's output; or treating well-formedness as learned,
+  which is what an unconstrained formulation implies and for
+  which there is at present no evidence at this scale.
+\end{enumerate}
+
+These four questions are stated rather than settled.  Each admits
+several defensible answers, the published evidence does not
+distinguish between them for geospatial data at tile scale, and
+the choice is consequential enough that it should be made
+deliberately and reported rather than inherited by default.
 
 % ------------------------------------------------------------------
 \subsection{Base Map SFT}
@@ -13036,6 +13144,12 @@ Z.~Li, W.~Wang, H.~Li, E.~Xie, C.~Sima, T.~Lu, Q.~Yu, and J.~Dai, ``BEVFormer: L
  
 \bibitem{li2022hdmapnet}
 Q.~Li, Y.~Wang, Y.~Wang, and H.~Zhao, ``HDMapNet: An online HD map construction and evaluation framework,'' in \textit{2022 International Conference on Robotics and Automation (ICRA)}, pp.~4628--4634, 2022.
+ 
+\bibitem{nash2020polygen}
+C.~Nash, Y.~Ganin, S.~M.~A. Eslami, and P.~W. Battaglia, ``PolyGen: An autoregressive generative model of 3D meshes,'' in \textit{Proceedings of the 37th International Conference on Machine Learning (ICML)}, pp.~7220--7229, 2020.
+ 
+\bibitem{liu2023vectormapnet}
+Y.~Liu, T.~Yuan, Y.~Wang, Y.~Wang, and H.~Zhao, ``VectorMapNet: End-to-end vectorized HD map learning,'' in \textit{Proceedings of the 40th International Conference on Machine Learning (ICML)}, pp.~22352--22369, 2023.
  
 \bibitem{liao2022maptr}
 B.~Liao, S.~Chen, X.~Wang, T.~Cheng, Q.~Zhang, W.~Liu, and C.~Huang, ``MapTR: Structured modeling and learning for online vectorized HD map construction,'' in \textit{International Conference on Learning Representations (ICLR)}, 2023.
