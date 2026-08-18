@@ -11896,18 +11896,93 @@ The most powerful pre-training objective forces the model to
 infer one modality from the other.  We mask the \emph{entire}
 LiDAR stream for a given tile and challenge the model to
 reconstruct the masked 3D geometry using only the 2D satellite
-imagery~\cite{liu2023geomae}:
+imagery~\cite{liu2023geomae}.
+
+Two properties of the LiDAR representation determine how this
+objective must be written.  First, a point cloud is an unordered
+set: a squared error between a predicted and a target cloud
+presumes a correspondence between their elements that does not
+exist, and their cardinalities need not agree.  Second, only
+occupied pillars produce tokens, so replacing each existing pillar
+token with a mask embedding would disclose the occupancy map
+through the token positions alone --- the model would be asked only
+for heights at cells it had already been told contain returns.  The
+second is a known failure mode of masked point-cloud
+pre-training~\cite{hess2023masked}.
+
+Both are resolved by defining the objective on the pillar grid
+rather than on a point set.  Let $\mathcal{G}$ denote the pillar
+cells of the tile ROI, $\mathcal{G}^{+} \subset \mathcal{G}$ the
+occupied cells, and $\mathcal{S} = \mathcal{G}^{+} \cup
+\mathcal{G}^{-}_{\text{samp}}$ the union of the occupied cells with
+an equally sized random sample of empty ones.  Mask tokens are
+embedded at every cell of $\mathcal{S}$, so that the presence of a
+token conveys no information about
+occupancy~\cite{hess2023masked}.  Grid index supplies the
+correspondence a point-set formulation lacks, at
+$O(|\mathcal{S}|)$ rather than the $O(N^2)$ cost of a Chamfer or
+earth-mover distance over the $\sim 10^5$ returns of a dense urban
+tile.
+
+For each cell the decoder predicts an occupancy logit
+$\hat{o}_{ij}$ and, for occupied cells, three geometric targets
+following GeoMAE~\cite{liu2023geomae}: the normalized centroid
+$\tilde{\mathbf{p}}_{ij}$ of
+Equation~\eqref{eq:centroid_normalized}, the unit surface normal
+$\mathbf{n}_{ij}$ obtained as the minor eigenvector of the
+covariance of the cell's returns, and the surface curvature
+$\kappa_{ij}$ given by the ratio of the smallest eigenvalue to the
+sum of all three:
 
 \begin{equation}
   \mathcal{L}_{\text{geo}} =
-    \mathbb{E}\!\left[\,\bigl\|
-      \mathrm{Dec}_{3D}
-        \bigl(\mathrm{Enc}(\mathcal{I}_{2D},\;
-        \mathrm{Mask}(P))\bigr)
-      - P
-    \bigr\|^2\right]
+    \mathbb{E}\Biggl[
+      \frac{1}{|\mathcal{S}|}\sum_{(i,j) \in \mathcal{S}}
+        \mathrm{BCE}_{w}\bigl(\hat{o}_{ij},\, o_{ij}\bigr)
+      \;+\;
+      \frac{\beta}{|\mathcal{G}^{+}|}
+        \sum_{(i,j) \in \mathcal{G}^{+}}
+        \Bigl(
+          \bigl\| \hat{\mathbf{p}}_{ij}
+            - \tilde{\mathbf{p}}_{ij} \bigr\|^2
+          + \bigl\| \hat{\mathbf{n}}_{ij}
+            - \mathbf{n}_{ij} \bigr\|^2
+          + \bigl( \hat{\kappa}_{ij}
+            - \kappa_{ij} \bigr)^2
+        \Bigr)
+    \Biggr]
   \label{eq:cross_modal_loss}
 \end{equation}
+
+where $o_{ij} \in \{0,1\}$ indicates whether cell $(i,j)$ contains
+returns, $\mathrm{BCE}_{w}$ is a positive-weighted binary
+cross-entropy, and $\beta$ balances the occupancy and geometry
+terms.  Positive weighting is necessary rather than optional:
+occupancy is strongly imbalanced, with roughly $97\%$ of cells
+empty at automotive LiDAR densities~\cite{lang2019pointpillars}, and
+an unweighted cross-entropy is minimized by predicting emptiness
+everywhere.  Restricting the geometric terms to $\mathcal{G}^{+}$
+avoids encoding emptiness as a sentinel value.  The normal and
+curvature targets carry information a centroid cannot: a centroid
+distinguishes a high cell from a low one, but only the normal
+distinguishes a flat roof from a pitched one, or pavement from a
+vertical facade.
+
+Predicting one centroid per pillar is a 2.5-dimensional
+representation, and cannot express geometry with vertical overlap
+such as a bridge crossing a road or a canopy above a footway.  This
+is a deliberate trade.  The pillar grid matches the encoder's own
+tokenization, keeps the correspondence between prediction and
+target trivial, and remains tractable over a $1.2$ km tile, where a
+full voxel grid at $0.2$ m horizontal and $0.5$ m vertical spacing
+would exceed $10^9$ cells.  It also respects the fact that S2
+provides no vertical subdivision, so a voxel target would require
+several tokens per cell distinguished only by their vertical
+offset.  For the HD Map configurations of
+Table~\ref{tab:gfm_types}, where ground-based LiDAR resolves
+facades, sign faces and overhanging structure over a much smaller
+extent, a voxel occupancy target~\cite{min2022mae3d} is the
+appropriate substitution.
 
 To reconstruct $P$ from $\mathcal{I}_{2D}$ alone the model
 must internalize physical priors: a sharp linear shadow at a
@@ -12903,6 +12978,9 @@ Y.~Pang, W.~Wang, F.~E.~H. Tay, W.~Liu, Y.~Tian, and L.~Yuan, ``Masked autoencod
  
 \bibitem{min2022mae3d}
 Z.~Min, Y.~Zhou, X.~Yang, J.~Li, G.~Li, and Y.~Yang, ``Occupancy-MAE: Self-supervised pre-training large-scale LiDAR point clouds with masked occupancy autoencoders,'' \textit{arXiv preprint arXiv:2206.09900}, 2022.
+ 
+\bibitem{hess2023masked}
+G.~Hess, J.~Jaxing, E.~Svensson, D.~Hagerman, C.~Petersson, and L.~Svensson, ``Masked autoencoder for self-supervised pre-training on LiDAR point clouds,'' in \textit{Proceedings of the IEEE/CVF Winter Conference on Applications of Computer Vision (WACV) Workshops}, pp.~350--359, 2023.
  
 \bibitem{liu2023geomae}
 Z.~Liu, Y.~Zhang, D.~Zhao, H.~Meng, and J.~Ren, ``GeoMAE: Masked geometric target prediction for self-supervised point cloud pre-training,'' in \textit{Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)}, pp.~13570--13580, 2023.
