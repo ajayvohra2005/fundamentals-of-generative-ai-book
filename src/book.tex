@@ -10354,11 +10354,22 @@ quantified by the following locality bound: for any two cells with
   \label{eq:hilbert_locality}
 \end{equation}
 
-where $d(\cdot,\cdot)$ is Euclidean distance in the 2-D grid and $C$
-is a constant that depends only on the grid resolution.  The
-$\frac{1}{2}$ exponent is the crucial detail: cells whose Hilbert
-indices are $k$ steps apart are at most $C\sqrt{k}$ grid steps apart
-in 2-D --- a \emph{sub-linear} growth.  Under raster order, by
+where $d(\cdot,\cdot)$ is Euclidean distance in the 2-D grid.  The
+constant $C$ is universal: it is neither a free parameter nor a
+function of grid resolution.  Bauman~\cite{bauman2006dilation}
+proved that the square-to-linear dilation factor of the
+Peano--Hilbert curve $p : [0,1] \to [0,1]^2$ is exactly $6$, that is,
+$|p(x) - p(y)|^2 \leq 6\,|x - y|$ with the bound attained.  On a
+$2^n \times 2^n$ grid of unit cells, a Hilbert index difference of
+$k$ corresponds to a parameter difference $k / 4^n$, so the squared
+distance in the unit square is at most $6k / 4^n$; rescaling by the
+grid width $2^n$ gives $d^2 \leq 6k$ and hence $C = \sqrt{6} \approx
+2.449$, independent of $n$.  This independence matters here: the
+same bound holds at every S2 level, so the locality guarantee does
+not degrade as the tokenization is refined.  The $\frac{1}{2}$
+exponent is the crucial detail: cells whose Hilbert indices are $k$
+steps apart are at most $\sqrt{6k}$ grid steps apart in 2-D --- a
+\emph{sub-linear} growth.  Under raster order, by
 contrast, cells $k$ steps apart in sequence can be up to $k$ cells
 apart in 2-D --- a \emph{linear} growth.  The Hilbert curve therefore
 provides a qualitatively tighter coupling between sequence proximity
@@ -12037,33 +12048,78 @@ the same physical location should have similar embeddings
 regardless of whether they came from the image stream or the
 LiDAR stream.
 
-For a batch of $N$ tiles, let $\mathbf{z}^{\text{img}}_i$ and
-$\mathbf{z}^{\text{lid}}_i$ be the $\ell_2$-normalised pooled
-embeddings (mean over tokens) of tile $i$ from each stream.
-The contrastive loss is~\cite{radford2021clip,chen2020simclr}:
+Alignment is defined between \emph{tokens}, not between tiles.  A
+tile-level formulation --- pooling each stream to a single vector and
+contrasting tiles within a batch --- would be easier to compute but
+would not express the property we want: distinguishing a dense urban
+tile from farmland requires only coarse pooled statistics, and can be
+achieved without the model ever learning which image patch
+corresponds to which pillar.  We therefore contrast at the token
+level, using S2 cell coincidence to define correspondence.
+
+Fix a matching level $\ell_c$, chosen so that an image token maps to
+approximately one cell; at $0.5$ m imagery with $p = 16$ the patch
+footprint is $8$ m, and $\ell_c = 20$ ($\approx 8.8$ m) is the
+natural choice.  A \textbf{positive pair} is an image token and a
+pillar token whose centres fall in the same level-$\ell_c$ cell.  Let
+$\mathcal{B}$ be a set of $M$ such pairs sampled per tile, and let
+$\mathbf{z}^{\text{img}}_a$ and $\mathbf{z}^{\text{lid}}_a$ denote
+the $\ell_2$-normalised token embeddings of pair
+$a \in \mathcal{B}$.  The symmetric contrastive
+loss~\cite{radford2021clip,chen2020simclr} is:
 
 \begin{equation}
   \mathcal{L}_{\text{align}} =
-    -\frac{1}{N}\sum_{i=1}^{N}
-    \log \frac{
-      \exp\!\bigl(
-        \mathbf{z}^{\text{img}}_i \cdot
-        \mathbf{z}^{\text{lid}}_i / \tau
-      \bigr)
-    }{
-      \sum_{j=1}^{N}
-      \exp\!\bigl(
-        \mathbf{z}^{\text{img}}_i \cdot
-        \mathbf{z}^{\text{lid}}_j / \tau
-      \bigr)
-    }
+    -\frac{1}{2|\mathcal{B}|}
+    \sum_{a \in \mathcal{B}}
+    \left[
+      \log \frac{
+        \exp\!\bigl(
+          \mathbf{z}^{\text{img}}_a \cdot
+          \mathbf{z}^{\text{lid}}_a / \tau
+        \bigr)
+      }{
+        \sum_{b \in \mathcal{N}(a)}
+        \exp\!\bigl(
+          \mathbf{z}^{\text{img}}_a \cdot
+          \mathbf{z}^{\text{lid}}_b / \tau
+        \bigr)
+      }
+      +
+      \log \frac{
+        \exp\!\bigl(
+          \mathbf{z}^{\text{lid}}_a \cdot
+          \mathbf{z}^{\text{img}}_a / \tau
+        \bigr)
+      }{
+        \sum_{b \in \mathcal{N}(a)}
+        \exp\!\bigl(
+          \mathbf{z}^{\text{lid}}_a \cdot
+          \mathbf{z}^{\text{img}}_b / \tau
+        \bigr)
+      }
+    \right]
   \label{eq:contrastive}
 \end{equation}
 
-where $\tau$ is a learnable temperature parameter.  The
-numerator rewards high similarity between matching tile pairs
-(same location, different modality); the denominator penalizes
-high similarity to non-matching tiles.
+where $\tau$ is a learnable temperature and $\mathcal{N}(a)$ is the
+candidate set for anchor $a$: pair $a$ itself together with all
+sampled pairs whose cells lie more than $r$ cells away from $a$'s
+cell.  The exclusion radius is necessary rather than decorative.  In
+a geospatial setting the tokens spatially nearest the anchor are
+frequently near-identical --- two adjacent cells of the same road
+surface, two neighbouring cells of one roof --- so admitting them as
+negatives supplies gradient that pushes apart embeddings which ought
+to be close.  We use $r = 3$ cells, approximately $26$ m at
+$\ell_c = 20$.
+
+Sampling $M$ pairs per tile, with $M = 256$, keeps the similarity
+matrix bounded: a tile may carry $10^4$ image tokens and $10^5$
+pillar tokens, and the full cross-modal matrix is neither necessary
+nor affordable.  Averaging both directions ensures that LiDAR
+embeddings serve as anchors and not only as candidates; the
+one-directional form leaves the LiDAR stream trained only through
+the denominator.
 
 \paragraph{The combined pre-training objective.}
 
@@ -13025,6 +13081,9 @@ Y.~Pang, W.~Wang, F.~E.~H. Tay, W.~Liu, Y.~Tian, and L.~Yuan, ``Masked autoencod
  
 \bibitem{min2022mae3d}
 Z.~Min, Y.~Zhou, X.~Yang, J.~Li, G.~Li, and Y.~Yang, ``Occupancy-MAE: Self-supervised pre-training large-scale LiDAR point clouds with masked occupancy autoencoders,'' \textit{arXiv preprint arXiv:2206.09900}, 2022.
+ 
+\bibitem{bauman2006dilation}
+K.~E. Bauman, ``The dilation factor of the Peano-Hilbert curve,'' \textit{Mathematical Notes}, vol.~80, no.~5, pp.~609--620, 2006.
  
 \bibitem{bachmann2022multimae}
 R.~Bachmann, D.~Mizrahi, A.~Atanov, and A.~Zamir, ``MultiMAE: Multi-modal multi-task masked autoencoders,'' in \textit{European Conference on Computer Vision (ECCV)}, pp.~348--367, 2022.
